@@ -18,6 +18,11 @@
 #   bash deployment/aws/install-docker-compose-run.sh .env.uat
 #   bash deployment/aws/install-docker-compose-run.sh .env.prod
 #   bash deployment/aws/install-docker-compose-run.sh .env.dev --no-build
+#   bash deployment/aws/install-docker-compose-run.sh .env.dev --down
+#
+# --down opens an interactive menu:
+#   1) Remove containers and Compose networks; preserve volumes.
+#   2) Remove containers, Compose networks, and Compose-managed volumes.
 #
 # Cloudflare is managed separately.
 
@@ -39,7 +44,7 @@ COMPOSE_FILE="$DOCKER_DIR/docker-compose.yml"
 # ------------------------------------------------------------
 
 usage() {
-    echo "Usage: $0 .env.dev|.env.uat|.env.prod [--no-build]"
+    echo "Usage: $0 .env.dev|.env.uat|.env.prod [--no-build|--down]"
 }
 
 [[ $# -ge 1 ]] || {
@@ -50,16 +55,24 @@ usage() {
 ENV_ARG="$1"
 shift
 NO_BUILD=0
+DOWN=0
 
 for arg in "$@"; do
     case "$arg" in
         --no-build) NO_BUILD=1 ;;
+        --down) DOWN=1 ;;
         *)
             usage >&2
             exit 2
             ;;
     esac
 done
+
+if [[ "$DOWN" -eq 1 && "$NO_BUILD" -eq 1 ]]; then
+    echo "ERROR: --down and --no-build cannot be used together." >&2
+    usage >&2
+    exit 2
+fi
 
 ENV_BASE="$(basename "$ENV_ARG")"
 
@@ -105,7 +118,11 @@ echo "Script dir   : $SCRIPT_DIR"
 echo "Compose file : $COMPOSE_FILE"
 echo "Environment  : $ENV_NAME"
 echo "Env file     : $ENV_FILE"
-echo "Build images : $((1 - NO_BUILD))"
+if [[ "$DOWN" -eq 1 ]]; then
+    echo "Operation    : Docker Compose down"
+else
+    echo "Build images : $((1 - NO_BUILD))"
+fi
 echo "=============================================="
 
 # ------------------------------------------------------------
@@ -373,7 +390,63 @@ echo "Validating Docker Compose configuration..."
 echo "[OK] Compose configuration is valid."
 
 # ------------------------------------------------------------
-# 13. Build and deploy.
+# 13. Docker Compose down options.
+# ------------------------------------------------------------
+
+if [[ "$DOWN" -eq 1 ]]; then
+    echo
+    echo "=============================================="
+    echo " Docker Compose Down - $ENV_NAME"
+    echo " Project: housiy-$ENV_NAME"
+    echo "=============================================="
+    echo "1) Down only (preserve named volumes and data)"
+    echo "   Removes containers and Compose networks."
+    echo
+    echo "2) Complete down (remove Compose-managed volumes)"
+    echo "   Removes containers, Compose networks and volumes."
+    echo "   Database/Redis data in those volumes will be deleted."
+    echo
+    echo "0) Cancel"
+    echo "=============================================="
+
+    read -r -p "Select an option [0-2]: " DOWN_OPTION
+
+    case "$DOWN_OPTION" in
+        1)
+            echo "Removing containers and Compose networks; preserving volumes..."
+            "${DC[@]}" down
+            ;;
+        2)
+            echo
+            echo "WARNING: This permanently deletes Compose-managed named and anonymous volumes."
+            echo "External volumes are not removed by Docker Compose."
+            read -r -p "Type '$ENV_NAME' to confirm volume deletion: " CONFIRM
+
+            if [[ "$CONFIRM" != "$ENV_NAME" ]]; then
+                echo "Confirmation did not match. Operation cancelled."
+                exit 1
+            fi
+
+            echo "Removing containers, Compose networks and Compose-managed volumes..."
+            "${DC[@]}" down --volumes
+            ;;
+        0)
+            echo "Operation cancelled."
+            exit 0
+            ;;
+        *)
+            echo "Invalid option. Operation cancelled." >&2
+            exit 2
+            ;;
+    esac
+
+    echo
+    echo "Docker Compose down completed for housiy-$ENV_NAME."
+    exit 0
+fi
+
+# ------------------------------------------------------------
+# 14. Build and deploy.
 # ------------------------------------------------------------
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
@@ -387,7 +460,7 @@ echo "Creating/updating containers..."
 "${DC[@]}" up -d
 
 # ------------------------------------------------------------
-# 14. Display deployment status.
+# 15. Display deployment status.
 # ------------------------------------------------------------
 
 echo
@@ -395,7 +468,7 @@ echo "Container status:"
 "${DC[@]}" ps
 
 # ------------------------------------------------------------
-# 15. Check application readiness.
+# 16. Check application readiness.
 # ------------------------------------------------------------
 
 APP_URL="http://127.0.0.1:${APP_PORT}/"
@@ -428,7 +501,7 @@ if [[ "$HEALTHY" -ne 1 ]]; then
 fi
 
 # ------------------------------------------------------------
-# 16. Final summary.
+# 17. Final summary.
 # ------------------------------------------------------------
 
 echo

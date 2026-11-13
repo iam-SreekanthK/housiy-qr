@@ -8,6 +8,7 @@ require_once __DIR__ . '/../includes/RoomAccess.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
 require_once __DIR__ . '/../includes/MarkBuffer.php';
 require_once __DIR__ . '/../includes/RoomState.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 
 $user = Auth::requireUser();
 RateLimiter::enforce('state_read', 'u:' . $user['id']);
@@ -44,7 +45,13 @@ if ((int)($ticket['id'] ?? 0) < 1 || !isset($ticket['grid']) || !is_array($ticke
 $autoCallSecondsRemaining = GameEngine::autoCallSecondsRemaining($room, $game, $state['last_called_at'] ?? null, $state['winners'] ?? []);
 $prizesEnabled = json_decode((string)($room['prizes_enabled'] ?? '[]'), true);
 $prizesEnabled = is_array($prizesEnabled) ? $prizesEnabled : [];
-$won = array_column($state['winners'], 'prize_type');
+$fullHouseProgress = FullHouse::progress($room, $state['winners'] ?? [], (int)($state['player_count'] ?? 0));
+// A prize counts as "won" (button closed for everyone) once all its winner
+// slots are filled. Full House stays open for others until its last slot.
+$won = array_values(array_unique(array_column($state['winners'], 'prize_type')));
+if (in_array('FULL_HOUSE', $won, true) && $fullHouseProgress['remaining'] > 0) {
+    $won = array_values(array_diff($won, ['FULL_HOUSE']));
+}
 // Winner ownership is already part of the versioned RoomState read model.
 // A successful claim bumps that room version after commit, so this remains
 // immediately consistent while avoiding one MySQL query per ticket refresh.
@@ -89,6 +96,9 @@ json_ok([
         'title' => $room['title'],
         'status' => $room['status'],
         'prizes_enabled' => $prizesEnabled,
+        'full_house_winners' => FullHouse::configured($room),
+        'full_house_total' => $fullHouseProgress['total'],
+        'full_house_remaining' => $fullHouseProgress['remaining'],
         'player_count' => $state['player_count'],
         'max_players' => (int)$room['max_players'],
         'auto_call_enabled' => (bool)($room['auto_call_enabled'] ?? false),

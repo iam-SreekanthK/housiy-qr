@@ -296,7 +296,7 @@ async function openRoomDetails(roomCode) {
   const winnersRows = res.winners.length
     ? res.winners.map((w, i) => `<tr>
         <td>${i + 1}</td>
-        <td>${escapeHtml((w.prize_type || '').replaceAll('_', ' '))}</td>
+        <td>${escapeHtml((w.prize_type || '').replaceAll('_', ' '))}${(w.prize_type === 'FULL_HOUSE' && Number(r.full_house_winners) > 1) ? ` <span class="text-dim">#${Number(w.winner_position) || 1} of ${Number(r.full_house_winners)}</span>` : ''}</td>
         <td>${escapeHtml(w.winner_name || '—')}</td>
         <td>${escapeHtml(w.winner_email || '—')}</td>
         <td class="text-nowrap">${formatAdminDateTime(w.claimed_at)}</td>

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/client.test.js && node test/csp.test.js && node test/load-contract.test.js && node test/protocol-contract.test.js && node test/nginx-contract.test.js && node test/rematch-lifecycle-contract.test.js && node test/winner-notification-contract.test.js && node test/speech-unlock-contract.test.js && node test/missed-numbers-contract.test.js && node test/winner-pause-contract.test.js && node test/qr-join-contract.test.js"
+    "test": "node test/client.test.js && node test/csp.test.js && node test/load-contract.test.js && node test/protocol-contract.test.js && node test/nginx-contract.test.js && node test/rematch-lifecycle-contract.test.js && node test/winner-notification-contract.test.js && node test/speech-unlock-contract.test.js && node test/missed-numbers-contract.test.js && node test/winner-pause-contract.test.js && node test/qr-join-contract.test.js && node test/full-house-winners-contract.test.js"
   },
   "engines": {
     "node": ">=18"

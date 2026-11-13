@@ -78,7 +78,11 @@
           <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="TOP_ROW" checked><label class="form-check-label small">Top Row</label></div>
           <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="MIDDLE_ROW" checked><label class="form-check-label small">Middle Row</label></div>
           <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="BOTTOM_ROW" checked><label class="form-check-label small">Bottom Row</label></div>
-          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="FULL_HOUSE" checked><label class="form-check-label small">Full House</label></div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="form-check mb-0"><input class="form-check-input prize-check" type="checkbox" value="FULL_HOUSE" id="fullHouseCheck" checked><label class="form-check-label small" for="fullHouseCheck">Full House</label></div>
+            <input id="fullHouseWinnersInput" type="number" class="form-control form-control-sm full-house-winners-input" value="1" min="1" max="5" inputmode="numeric" aria-label="Number of Full House winners (1 to 5)" title="How many players can win Full House (1–5). The game continues until all are won.">
+            <span class="text-dim small" id="fullHouseWinnersHint">winner</span>
+          </div>
         </div>
 
         <hr class="border-secondary my-3">
@@ -111,6 +115,6 @@
 </div>
 
 <script src="assets/js/common.js"></script>
-<script src="assets/js/page-index.js?v=20261113-qr-invite" defer></script>
+<script src="assets/js/page-index.js?v=20261113-fh-winners" defer></script>
 </body>
 </html>

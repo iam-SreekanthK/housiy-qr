@@ -5,7 +5,7 @@
 # (the *.example templates ARE committed)
 .env.uat
 .env.prod
-#deployment/docker/.env.dev
+deployment/docker/.env.dev
 deployment/docker/.env.uat
 deployment/docker/.env.prod
 # Legacy scratch copy of the env file; it contained real credentials.

@@ -2547,3 +2547,5 @@ table.table-dark-glass tbody tr.user-row:hover {
 .invite-banner-link { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
 .invite-banner-link:hover { text-decoration: underline; }
 .mobile-menu-item .btn { min-width: 64px; }
+
+.full-house-winners-input { width: 52px; flex: 0 0 auto; text-align: center; padding-left: 6px; padding-right: 6px; }

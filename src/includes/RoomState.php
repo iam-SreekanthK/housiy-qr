@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/RoomAccess.php';
 require_once __DIR__ . '/GameEngine.php';
+require_once __DIR__ . '/FullHouse.php';
 require_once __DIR__ . '/RedisCache.php';
 require_once __DIR__ . '/Realtime.php';
 require_once __DIR__ . '/EndpointProfiler.php';
@@ -91,7 +92,7 @@ final class RoomState
              JOIN winner_claims wc ON wc.id = rpw.winner_claim_id
              JOIN users u ON u.id = wc.user_id
              WHERE rpw.room_id = ?
-             ORDER BY rpw.awarded_at ASC', [$room['id']]);
+             ORDER BY rpw.awarded_at ASC, rpw.id ASC', [$room['id']]);
 
         $state = [
             'room' => $room,
@@ -102,7 +103,7 @@ final class RoomState
             // deriving the count avoids a redundant COUNT(*) on cache misses.
             'player_count' => count($players),
             'players' => $players,
-            'winners' => $winnersStmt->fetchAll(),
+            'winners' => FullHouse::annotate($winnersStmt->fetchAll()),
         ];
         if ($redis && $key) {
             $serializeSpan = EndpointProfiler::start('room_state.serialize_cache_write');

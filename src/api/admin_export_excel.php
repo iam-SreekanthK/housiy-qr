@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 $admin = AdminAuth::requireAdmin();
@@ -62,8 +63,14 @@ if ($roomCode !== '') {
   $duration='—';
   if (!empty($room['started_at']) && !empty($room['ended_at'])) { $secs=max(0,strtotime($room['ended_at'].' UTC')-strtotime($room['started_at'].' UTC')); $duration=intdiv($secs,3600).'h '.intdiv($secs%3600,60).'m '.($secs%60).'s'; }
   $html .= xls_table('Room details', ['Room Code','Title','Status','Host','Host Email','Max Players','Created','Started','Ended','Duration','Reactions Count'], [[ $room['room_code'] ?? $roomCode, $room['title'] ?? '', $room['status'] ?? '', $h['name'] ?? '', $h['email'] ?? '', $room['max_players'] ?? '', $room['created_at'] ?? '', $room['started_at'] ?? '', $room['ended_at'] ?? '', $duration, $reactionCount ]]);
-  $q=$pdo->prepare('SELECT rpw.prize_type,u.name,u.email,wc.claimed_at FROM room_prize_winners rpw JOIN winner_claims wc ON wc.id=rpw.winner_claim_id JOIN users u ON u.id=wc.user_id WHERE rpw.room_id=? ORDER BY rpw.awarded_at'); $q->execute([$room['id']]);
-  $html .= xls_table('Winners', ['Prize','Winner','Email','Claimed At'], $q->fetchAll(PDO::FETCH_NUM));
+  $q=$pdo->prepare('SELECT rpw.prize_type,u.name,u.email,wc.claimed_at FROM room_prize_winners rpw JOIN winner_claims wc ON wc.id=rpw.winner_claim_id JOIN users u ON u.id=wc.user_id WHERE rpw.room_id=? ORDER BY rpw.awarded_at, rpw.id'); $q->execute([$room['id']]);
+  $fhConfigured = FullHouse::configured($room);
+  $winnerRows = [];
+  foreach (FullHouse::annotate($q->fetchAll(PDO::FETCH_ASSOC)) as $w) {
+    $prizeLabel = $w['prize_type'] . ($w['prize_type'] === 'FULL_HOUSE' && $fhConfigured > 1 ? ' #' . (int)$w['winner_position'] . ' of ' . $fhConfigured : '');
+    $winnerRows[] = [$prizeLabel, $w['name'], $w['email'], $w['claimed_at']];
+  }
+  $html .= xls_table('Winners', ['Prize','Winner','Email','Claimed At'], $winnerRows);
   $q=$pdo->prepare('SELECT u.name,u.email,rp.joined_at FROM room_players rp JOIN users u ON u.id=rp.user_id WHERE rp.room_id=? ORDER BY rp.joined_at'); $q->execute([$room['id']]);
   $html .= xls_table('Players in room', ['Player','Email','Joined Date'], $q->fetchAll(PDO::FETCH_NUM));
   $filename='housiy_room_' . preg_replace('/[^A-Za-z0-9_-]/','',strtoupper($roomCode));

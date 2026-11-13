@@ -6,6 +6,7 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/Auth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/TicketGenerator.php';
 
 /**
@@ -63,11 +64,14 @@ if (!$roomCodeNew) {
 
 $roomUuid = bin2hex(random_bytes(16));
 
+// The rematch keeps the same Full House winner count as the original room.
+$fullHouseWinners = FullHouse::configured($room);
+
 $pdo->beginTransaction();
 try {
     $ins = $pdo->prepare(
-        'INSERT INTO rooms (room_code, room_uuid, host_user_id, title, max_players, status, prizes_enabled, parent_room_id, auto_call_enabled, auto_call_interval_seconds)
-         VALUES (?, ?, ?, ?, ?, "LOBBY", ?, ?, ?, ?)'
+        'INSERT INTO rooms (room_code, room_uuid, host_user_id, title, max_players, status, prizes_enabled, full_house_winners, parent_room_id, auto_call_enabled, auto_call_interval_seconds)
+         VALUES (?, ?, ?, ?, ?, "LOBBY", ?, ?, ?, ?, ?)'
     );
     $ins->execute([
         $roomCodeNew,
@@ -76,6 +80,7 @@ try {
         $room['title'],
         $room['max_players'],
         $room['prizes_enabled'],
+        $fullHouseWinners,
         $room['id'],
         $autoCallEnabled ? 1 : 0,
         $autoCallEnabled ? $autoCallInterval : null,

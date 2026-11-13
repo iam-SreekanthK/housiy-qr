@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 
@@ -106,10 +107,11 @@ if ($roomCode !== '') {
          JOIN winner_claims wc ON wc.id = rpw.winner_claim_id
          JOIN users u ON u.id = wc.user_id
          WHERE rpw.room_id = ?
-         ORDER BY rpw.awarded_at ASC'
+         ORDER BY rpw.awarded_at ASC, rpw.id ASC'
     );
     $winnersStmt->execute([$room['id']]);
-    $winners = $winnersStmt->fetchAll();
+    $winners = FullHouse::annotate($winnersStmt->fetchAll());
+    $fullHouseConfigured = FullHouse::configured($room);
 
     header('Content-Type: text/html; charset=utf-8');
     ?>
@@ -138,7 +140,7 @@ if ($roomCode !== '') {
     <h2>Winners (<?= count($winners) ?>)</h2>
     <table><thead><tr><th>Prize Name</th><th>Winner Name</th><th>Email</th><th>Claim Time</th></tr></thead><tbody>
     <?php if (!$winners): ?><tr><td colspan="4">No winners yet.</td></tr><?php endif; ?>
-    <?php foreach ($winners as $w): ?><tr><td><?= h(str_replace('_', ' ', $w['prize_type'])) ?></td><td><?= h($w['winner_name']) ?></td><td><?= h(mask_report_email($w['winner_email'])) ?></td><td><?= h(report_time($w['claimed_at'])) ?></td></tr><?php endforeach; ?>
+    <?php foreach ($winners as $w): ?><tr><td><?= h(str_replace('_', ' ', $w['prize_type']) . ($w['prize_type'] === 'FULL_HOUSE' && $fullHouseConfigured > 1 ? ' #' . (int)$w['winner_position'] . ' of ' . $fullHouseConfigured : '')) ?></td><td><?= h($w['winner_name']) ?></td><td><?= h(mask_report_email($w['winner_email'])) ?></td><td><?= h(report_time($w['claimed_at'])) ?></td></tr><?php endforeach; ?>
     </tbody></table>
     <h2>Players in Room (<?= count($players) ?>)</h2>
     <table><thead><tr><th>Player Name</th><th>Email</th><th>Joined At</th></tr></thead><tbody>

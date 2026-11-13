@@ -165,6 +165,33 @@ document.getElementById('autoCallToggle').addEventListener('change', (e) => {
   document.getElementById('autoCallOffHint').classList.toggle('d-none', e.target.checked);
 });
 
+// Full House winners (1-5): the box only applies while Full House is ticked.
+const fullHouseCheck = document.getElementById('fullHouseCheck');
+const fullHouseWinnersInput = document.getElementById('fullHouseWinnersInput');
+const fullHouseWinnersHint = document.getElementById('fullHouseWinnersHint');
+function clampFullHouseWinners() {
+  let n = parseInt(fullHouseWinnersInput.value, 10);
+  if (!Number.isFinite(n)) n = 1;
+  n = Math.min(5, Math.max(1, n));
+  fullHouseWinnersInput.value = String(n);
+  fullHouseWinnersHint.textContent = n === 1 ? 'winner' : 'winners';
+  return n;
+}
+function syncFullHouseWinnersState() {
+  fullHouseWinnersInput.disabled = !fullHouseCheck.checked;
+  fullHouseWinnersInput.classList.toggle('opacity-50', !fullHouseCheck.checked);
+  fullHouseWinnersHint.classList.toggle('opacity-50', !fullHouseCheck.checked);
+}
+fullHouseWinnersInput.addEventListener('input', () => {
+  // Let the host clear the box while typing; fix it on blur/change/submit.
+  const n = parseInt(fullHouseWinnersInput.value, 10);
+  if (Number.isFinite(n)) fullHouseWinnersHint.textContent = n === 1 ? 'winner' : 'winners';
+});
+fullHouseWinnersInput.addEventListener('change', clampFullHouseWinners);
+fullHouseWinnersInput.addEventListener('blur', clampFullHouseWinners);
+fullHouseCheck.addEventListener('change', syncFullHouseWinnersState);
+syncFullHouseWinnersState();
+
 document.getElementById('hostBtn').addEventListener('click', async () => {
   const ident = getIdentityInputs();
   if (!ident) return;
@@ -172,13 +199,14 @@ document.getElementById('hostBtn').addEventListener('click', async () => {
   const maxPlayers = parseInt(document.getElementById('maxPlayersInput').value, 10) || 100;
   const prizes = Array.from(document.querySelectorAll('.prize-check:checked')).map(c => c.value);
   if (prizes.length === 0) { showToast('Select at least one prize', 'danger'); return; }
+  const fullHouseWinners = prizes.includes('FULL_HOUSE') ? clampFullHouseWinners() : 1;
   const autoCallEnabled = document.getElementById('autoCallToggle').checked;
   let autoCallIntervalSeconds = parseInt(document.getElementById('autoCallIntervalInput').value, 10) || 5;
   autoCallIntervalSeconds = Math.min(60, Math.max(3, autoCallIntervalSeconds));
   const btn = document.getElementById('hostBtn');
   btn.disabled = true; btn.textContent = 'Creating...';
   const res = await apiPost('room_create.php', {
-    name: ident.name, email: ident.email, title, max_players: maxPlayers, prizes,
+    name: ident.name, email: ident.email, title, max_players: maxPlayers, prizes, full_house_winners: fullHouseWinners,
     auto_call_enabled: autoCallEnabled, auto_call_interval_seconds: autoCallIntervalSeconds,
   });
   btn.disabled = false; btn.textContent = 'Create Room';

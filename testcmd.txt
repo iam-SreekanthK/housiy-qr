@@ -1,12 +1,3 @@
-
-docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev down -v
-docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev build --no-cache
-docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev up -d
-
-cloudflared tunnel --url http://localhost:8081
-
-
-
 mkdir -p tests/load/results
 
 k6 run \

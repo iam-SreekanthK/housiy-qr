@@ -5,6 +5,7 @@ require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/Auth.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/TicketGenerator.php';
 
 require_post();
@@ -17,6 +18,7 @@ $maxPlayers = (int)($body['max_players'] ?? MAX_PLAYERS_DEFAULT);
 $prizes = $body['prizes'] ?? PRIZE_TYPES;
 $autoCallEnabled = !empty($body['auto_call_enabled']);
 $autoCallInterval = (int)($body['auto_call_interval_seconds'] ?? 5);
+$fullHouseWinners = FullHouse::normalize($body['full_house_winners'] ?? 1);
 
 if (!is_array($prizes) || empty($prizes)) {
     $prizes = PRIZE_TYPES;
@@ -24,6 +26,9 @@ if (!is_array($prizes) || empty($prizes)) {
 $prizes = array_values(array_intersect($prizes, PRIZE_TYPES));
 if (empty($prizes)) {
     json_error('At least one prize must be enabled.');
+}
+if (!in_array('FULL_HOUSE', $prizes, true)) {
+    $fullHouseWinners = 1; // no Full House prize in this room, nothing to configure
 }
 if ($maxPlayers < 1 || $maxPlayers > 100) {
     $maxPlayers = MAX_PLAYERS_DEFAULT;
@@ -63,11 +68,11 @@ $roomUuid = bin2hex(random_bytes(16));
 $pdo->beginTransaction();
 try {
     $ins = $pdo->prepare(
-        'INSERT INTO rooms (room_code, room_uuid, host_user_id, title, max_players, status, prizes_enabled, auto_call_enabled, auto_call_interval_seconds)
-         VALUES (?, ?, ?, ?, ?, "LOBBY", ?, ?, ?)'
+        'INSERT INTO rooms (room_code, room_uuid, host_user_id, title, max_players, status, prizes_enabled, full_house_winners, auto_call_enabled, auto_call_interval_seconds)
+         VALUES (?, ?, ?, ?, ?, "LOBBY", ?, ?, ?, ?)'
     );
     $ins->execute([
-        $roomCode, $roomUuid, $user['id'], $title, $maxPlayers, json_encode(array_values($prizes)),
+        $roomCode, $roomUuid, $user['id'], $title, $maxPlayers, json_encode(array_values($prizes)), $fullHouseWinners,
         $autoCallEnabled ? 1 : 0, $autoCallEnabled ? $autoCallInterval : null,
     ]);
     $roomId = (int)$pdo->lastInsertId();
@@ -101,6 +106,7 @@ json_ok([
         'max_players' => $maxPlayers,
         'status' => 'LOBBY',
         'prizes_enabled' => $prizes,
+        'full_house_winners' => $fullHouseWinners,
         'auto_call_enabled' => $autoCallEnabled,
         'auto_call_interval_seconds' => $autoCallEnabled ? $autoCallInterval : null,
     ],

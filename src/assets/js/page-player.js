@@ -214,29 +214,55 @@ async function loadTicket() {
   document.getElementById('roomTitleText').textContent = `${res.room.title} (${res.room.room_code})`;
   ticketGrid = res.ticket.grid;
   ticketId = res.ticket.id;
-  buildClaimButtons(res.room.prizes_enabled, res.prizes_won, res.prizes_won_by_me || []);
+  syncClaimStateFrom(res);
+  buildClaimButtons(res.room.prizes_enabled);
   previousCurrentNumber = res.game.current_number;
   renderAll(res);
   void fetchRoomExtras().finally(() => { initialRoomExtrasLoaded = true; });
 }
 
-function buildClaimButtons(prizesEnabled, prizesWon, prizesWonByMe = []) {
+// Shared claim state. Full House can have several winners: total is how many
+// slots the room has, remaining how many are still open ("Full House (2)").
+let claimState = { prizesWon: [], prizesWonByMe: [], full_house_total: 1, full_house_remaining: 1 };
+let roomHasMultiFullHouse = false;
+
+function fullHouseTotalNow() { return claimState.full_house_total || 1; }
+
+function syncClaimStateFrom(res) {
+  claimState = {
+    prizesWon: Array.isArray(res.prizes_won) ? res.prizes_won.slice() : claimState.prizesWon,
+    prizesWonByMe: Array.isArray(res.prizes_won_by_me) ? res.prizes_won_by_me.slice() : claimState.prizesWonByMe,
+    full_house_total: Number(res.room?.full_house_total ?? claimState.full_house_total) || 1,
+    full_house_remaining: Number(res.room?.full_house_remaining ?? claimState.full_house_remaining),
+  };
+  roomHasMultiFullHouse = claimState.full_house_total > 1;
+}
+
+function refreshClaimButtons() {
+  document.querySelectorAll('#claimButtons .claim-btn').forEach(btn => {
+    applyClaimButtonState(btn, btn.dataset.prize, claimState, PRIZE_LABELS[btn.dataset.prize] || btn.dataset.prize);
+  });
+}
+
+function buildClaimButtons(prizesEnabled) {
   const container = document.getElementById('claimButtons');
   container.innerHTML = prizesEnabled.map(p => `
-    <button class="btn btn-outline-glass btn-sm claim-btn${prizesWon.includes(p) ? ' claimed' : ''}${prizesWonByMe.includes(p) ? ' claimed-self' : ''}" data-prize="${p}" ${prizesWon.includes(p) ? 'disabled' : ''}>
+    <button class="btn btn-outline-glass btn-sm claim-btn" data-prize="${p}">
       ${PRIZE_LABELS[p] || p}
     </button>`).join('');
   container.querySelectorAll('.claim-btn').forEach(btn => {
     btn.addEventListener('click', () => submitClaim(btn.dataset.prize, btn));
   });
+  refreshClaimButtons();
 }
 
-function announceWinnerOnce(winnerName, prizeType, winnerEmail = null) {
+function announceWinnerOnce(winnerName, prizeType, winnerEmail = null, position = 1, total = 1) {
   const prize = String(prizeType || '').toUpperCase();
-  if (!prize || announcedWinnerKeys.has(prize)) return false;
-  announcedWinnerKeys.add(prize);
-  previousWinnerKeys.add(prize);
-  return announceRoomWinnerOnce(winnerName, prize, winnerEmail);
+  const key = winnerKey(prize, position);
+  if (!prize || announcedWinnerKeys.has(key)) return false;
+  announcedWinnerKeys.add(key);
+  previousWinnerKeys.add(key);
+  return announceRoomWinnerOnce(winnerName, prize, winnerEmail, position, total);
 }
 
 async function submitClaim(prizeType, btn) {
@@ -258,8 +284,14 @@ async function submitClaim(prizeType, btn) {
     : await apiPost('claim.php', { room_code: roomCode, prize_type: prizeType });
   if (res.success && res.valid) {
     showToast(`🎉 Valid claim! You won ${PRIZE_LABELS[prizeType]}`, 'success');
-    btn.textContent = PRIZE_LABELS[prizeType];
-    btn.classList.add('claimed', 'claimed-self');
+    if (!claimState.prizesWonByMe.includes(prizeType)) claimState.prizesWonByMe.push(prizeType);
+    if (prizeType === 'FULL_HOUSE' && res.full_house_remaining != null) {
+      claimState.full_house_remaining = Number(res.full_house_remaining);
+      if (claimState.full_house_remaining <= 0 && !claimState.prizesWon.includes(prizeType)) claimState.prizesWon.push(prizeType);
+    } else if (!claimState.prizesWon.includes(prizeType)) {
+      claimState.prizesWon.push(prizeType);
+    }
+    refreshClaimButtons(); // winner's own button turns green; bracket count updates
     // Do not announce locally from the HTTP/WS command response. Every player,
     // including the claimant, receives the same room-wide prize_won event and
     // uses the same popup + voice handler. This keeps timing and presentation
@@ -402,10 +434,18 @@ window.addEventListener('housiy:realtime', (event) => {
     pendingMarks.delete(Number(data.number));
     renderTicket(document.getElementById('ticketContainer'), ticketGrid, calledSetGlobal, markedSet, markCell, ticketId);
   } else if (type === 'prize_won') {
-    const prize = String(data.prize_type || '');
-    const btn = document.querySelector(`.claim-btn[data-prize="${CSS.escape(prize)}"]`);
-    if (btn) { btn.disabled = true; btn.classList.add('claimed'); btn.textContent = PRIZE_LABELS[prize] || prize; }
-    if (data.winner_name && prize) announceWinnerOnce(data.winner_name, prize, data.winner_email || null);
+    const prize = String(data.prize_type || '').toUpperCase();
+    if (prize === 'FULL_HOUSE' && data.full_house_total != null) {
+      // Several Full House winners: this event carries the slots left.
+      claimState.full_house_total = Number(data.full_house_total) || 1;
+      claimState.full_house_remaining = Number(data.full_house_remaining) || 0;
+      roomHasMultiFullHouse = claimState.full_house_total > 1;
+      if (claimState.full_house_remaining <= 0 && !claimState.prizesWon.includes(prize)) claimState.prizesWon.push(prize);
+    } else if (prize && !claimState.prizesWon.includes(prize)) {
+      claimState.prizesWon.push(prize);
+    }
+    refreshClaimButtons();
+    if (data.winner_name && prize) announceWinnerOnce(data.winner_name, prize, data.winner_email || null, data.winner_position || 1, data.full_house_total || 1);
   }
 });
 
@@ -469,15 +509,9 @@ function renderAll(res) {
   }
   previousCurrentNumber = res.game.current_number;
 
-  // update claim button disabled state from prizes_won
-  document.querySelectorAll('.claim-btn').forEach(btn => {
-    if (res.prizes_won.includes(btn.dataset.prize)) {
-      btn.disabled = true;
-      btn.textContent = PRIZE_LABELS[btn.dataset.prize] || btn.dataset.prize;
-      btn.classList.add('claimed');
-      if ((res.prizes_won_by_me || []).includes(btn.dataset.prize)) btn.classList.add('claimed-self');
-    }
-  });
+  // update claim buttons (closed prizes, green winner button, Full House bracket)
+  syncClaimStateFrom(res);
+  refreshClaimButtons();
 
   // Do not fetch results.php from every ticket render. Ticket snapshots are
   // refreshed on reconnect/gaps; room extras have their own lifecycle/event path.
@@ -501,6 +535,17 @@ async function fetchRoomExtras(options = {}) {
   // Date.now()) so the two never show a different "in progress" duration.
   renderGameDetails(res.room, res.room && !res.room.ended_at ? gameTimerSeconds : undefined);
 
+  // Keep the Full House counter in step with the canonical room snapshot.
+  if (res.room && res.room.full_house_total != null) {
+    claimState.full_house_total = Number(res.room.full_house_total) || 1;
+    claimState.full_house_remaining = Number(res.room.full_house_remaining) || 0;
+    roomHasMultiFullHouse = claimState.full_house_total > 1;
+    if (claimState.full_house_remaining <= 0 && res.winners.some(w => w.prize_type === 'FULL_HOUSE') && !claimState.prizesWon.includes('FULL_HOUSE')) {
+      claimState.prizesWon.push('FULL_HOUSE');
+    }
+    refreshClaimButtons();
+  }
+
   const winnersList = document.getElementById('winnersList');
   if (res.winners.length === 0) {
     winnersList.innerHTML = '<p class="text-dim small mb-0">No winners yet.</p>';
@@ -508,7 +553,7 @@ async function fetchRoomExtras(options = {}) {
     winnersList.innerHTML = res.winners.map(w => `
       <div class="winner-item">
         <span class="winner-item-prizecol">
-          <span class="winner-item-prize">${escapeHtml(PRIZE_LABELS[w.prize_type] || w.prize_type)}</span>
+          <span class="winner-item-prize">${escapeHtml(winnerListPrizeLabel(w, PRIZE_LABELS[w.prize_type] || w.prize_type, roomHasMultiFullHouse || res.winners.filter(x => x.prize_type === 'FULL_HOUSE').length > 1))}</span>
           ${w.claimed_at ? `<span class="winner-item-time">${escapeHtml(formatLocalTimeSeconds(w.claimed_at))}</span>` : ''}
         </span>
         <span class="winner-item-info">
@@ -526,17 +571,17 @@ async function fetchRoomExtras(options = {}) {
     // already mid-game with prizes already won, just record what's
     // already there — show the winners list and final state plainly,
     // with no replayed banners/confetti/winner card.
-    previousWinnerKeys = new Set(res.winners.map(w => w.prize_type));
+    previousWinnerKeys = new Set(res.winners.map(w => winnerKey(w.prize_type, w.winner_position)));
     if (res.game.status === 'ENDED' || res.room.status === 'COMPLETED') {
       finalWinnersShown = true;
     }
   } else {
     res.winners.forEach(w => {
-      if (!previousWinnerKeys.has(w.prize_type)) {
-        announceWinnerOnce(w.winner_name, w.prize_type, w.winner_email);
+      if (!previousWinnerKeys.has(winnerKey(w.prize_type, w.winner_position))) {
+        announceWinnerOnce(w.winner_name, w.prize_type, w.winner_email, w.winner_position || 1, fullHouseTotalNow());
       }
     });
-    previousWinnerKeys = new Set(res.winners.map(w => w.prize_type));
+    previousWinnerKeys = new Set(res.winners.map(w => winnerKey(w.prize_type, w.winner_position)));
 
     // Once the game is over — every enabled prize actually claimed
     // (GameEngine::checkAndAutoEnd), or the host ended it manually — show

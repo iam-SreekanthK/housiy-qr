@@ -280,17 +280,72 @@ function runNextWinnerAnnouncement() {
   speakPhrase(`${item.winnerName} won ${item.label}!`, () => { voiceDone = true; tryFinish(); });
 }
 
-function announceRoomWinnerOnce(winnerName, prizeType, winnerEmail = null) {
+/** English ordinal for a small positive number: 1 -> "1st", 2 -> "2nd". */
+function winnerOrdinal(n) {
+  n = Number(n) || 1;
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${n}th`;
+  return `${n}${({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th'}`;
+}
+
+/** Identity of one prize award. Only Full House can have several winners
+ *  (positions 1..5); every other prize keeps its plain type as the key, so
+ *  single-winner rooms behave exactly as before. */
+function winnerKey(prizeType, position) {
+  const prize = String(prizeType || '').toUpperCase();
+  const pos = Number(position) || 1;
+  return prize === 'FULL_HOUSE' && pos > 1 ? `${prize}#${pos}` : prize;
+}
+
+/** Text for a prize on a claim button. Full House with several winners shows
+ *  how many are still up for grabs, e.g. "Full House (2)". */
+function prizeClaimLabel(prizeType, baseLabel, room) {
+  if (String(prizeType) === 'FULL_HOUSE' && room) {
+    const total = Number(room.full_house_total || 1);
+    const remaining = Number(room.full_house_remaining ?? total);
+    if (total > 1 && remaining > 0) return `${baseLabel} (${remaining})`;
+  }
+  return baseLabel;
+}
+
+/** Sets one claim button from the shared claim state:
+ *   { prizesWon, prizesWonByMe, full_house_total, full_house_remaining }
+ *  - a prize is closed for everyone once all its winner slots are filled;
+ *  - a player who has already won Full House gets a green, closed button
+ *    even while the remaining slots stay open for everyone else;
+ *  - Full House with several winners shows the slots left, e.g. "Full House (2)". */
+function applyClaimButtonState(btn, prize, state, baseLabel) {
+  const prizesWon = state.prizesWon || [];
+  const mine = (state.prizesWonByMe || []).includes(prize);
+  const closed = prizesWon.includes(prize) || (prize === 'FULL_HOUSE' && mine);
+  btn.disabled = closed;
+  btn.classList.toggle('claimed', closed);
+  btn.classList.toggle('claimed-self', closed && mine);
+  btn.textContent = closed ? baseLabel : prizeClaimLabel(prize, baseLabel, state);
+}
+
+/** Prize name for a winners list row; adds "(2nd)" when the room has several Full House winners. */
+function winnerListPrizeLabel(w, baseLabel, multiFullHouse) {
+  if (multiFullHouse && String(w.prize_type || '').toUpperCase() === 'FULL_HOUSE') {
+    return `${baseLabel} (${winnerOrdinal(w.winner_position)})`;
+  }
+  return baseLabel;
+}
+
+function announceRoomWinnerOnce(winnerName, prizeType, winnerEmail = null, position = 1, total = 1) {
   const prize = String(prizeType || '').toUpperCase().trim();
   if (!prize) return false;
   const roomKey = String((typeof roomCode !== 'undefined' && roomCode) || window.housiyRoomCode || '').toUpperCase();
-  const announcementKey = `${roomKey}:${prize}`;
-  if (roomWinnerAnnouncements.has(announcementKey) || roomWinnerAnnouncements.has(prize)) return false;
+  const key = winnerKey(prize, position);
+  const announcementKey = `${roomKey}:${key}`;
+  if (roomWinnerAnnouncements.has(announcementKey) || roomWinnerAnnouncements.has(key)) return false;
   // Mark before touching DOM or speechSynthesis: a second event arriving in
   // the same task/microtask cannot enqueue a second voice utterance.
   roomWinnerAnnouncements.add(announcementKey);
-  roomWinnerAnnouncements.add(prize);
-  const label = ({FIRST_FIVE:'First Five',TOP_ROW:'Top Row',MIDDLE_ROW:'Middle Row',BOTTOM_ROW:'Bottom Row',FULL_HOUSE:'Full House'})[prize] || prize.replaceAll('_', ' ');
+  roomWinnerAnnouncements.add(key);
+  let label = ({FIRST_FIVE:'First Five',TOP_ROW:'Top Row',MIDDLE_ROW:'Middle Row',BOTTOM_ROW:'Bottom Row',FULL_HOUSE:'Full House'})[prize] || prize.replaceAll('_', ' ');
+  // With several Full House winners, say which one this is ("Full House, 2nd winner").
+  if (prize === 'FULL_HOUSE' && Number(total) > 1) label = `${label} (${winnerOrdinal(position)} winner)`;
   winnerAnnounceQueue.push({ winnerName: winnerName || 'A player', label, winnerEmail });
   runNextWinnerAnnouncement();
   return true;
@@ -413,9 +468,10 @@ function showFinalWinnersBanner(winners, onClose) {
   // this completed game. This also suppresses the trailing WINNER_DECLARED
   // event that may follow GAME_FINISHED in the same Redis publication batch.
   (winners || []).forEach(w => {
-    const prize = String(w.prize_type || '').toUpperCase();
-    if (prize) roomWinnerAnnouncements.add(prize);
+    const key = winnerKey(w.prize_type, w.winner_position);
+    if (key) roomWinnerAnnouncements.add(key);
   });
+  const fullHouseCount = (winners || []).filter(w => String(w.prize_type || '').toUpperCase() === 'FULL_HOUSE').length;
   const already = document.getElementById('finalWinnersOverlay');
   if (already) already.remove();
 
@@ -424,7 +480,8 @@ function showFinalWinnersBanner(winners, onClose) {
   overlay.className = 'final-winners-overlay';
 
   const rows = (winners || []).map(w => {
-    const label = FINAL_BANNER_PRIZE_LABELS[w.prize_type] || String(w.prize_type).replace(/_/g, ' ');
+    let label = FINAL_BANNER_PRIZE_LABELS[w.prize_type] || String(w.prize_type).replace(/_/g, ' ');
+    if (String(w.prize_type).toUpperCase() === 'FULL_HOUSE' && fullHouseCount > 1) label += ` (${winnerOrdinal(w.winner_position)})`;
     return `
       <div class="final-winners-row">
         <span class="final-winners-prize">${escapeHtml(label)}</span>
@@ -476,11 +533,13 @@ function showFinalWinnersOnce(winners, gameKey = 'current', onClose) {
   const key = String(gameKey || 'current');
   if (!Array.isArray(winners) || winners.length === 0 || finalWinnersSummaryShown.has(key)) return false;
   finalWinnersSummaryShown.add(key);
-  const fullHouse = winners.find(w => String(w.prize_type || '').toUpperCase() === 'FULL_HOUSE');
+  const fullHouseWinners = winners.filter(w => String(w.prize_type || '').toUpperCase() === 'FULL_HOUSE');
+  // With several Full House winners the one that ends the game is the last.
+  const fullHouse = fullHouseWinners[fullHouseWinners.length - 1];
   if (fullHouse) {
     // Full House celebration order: winner banner + balloons/voice first,
     // then the complete winners card after the banner has finished.
-    announceRoomWinnerOnce(fullHouse.winner_name, 'FULL_HOUSE', fullHouse.winner_email || null);
+    announceRoomWinnerOnce(fullHouse.winner_name, 'FULL_HOUSE', fullHouse.winner_email || null, fullHouse.winner_position || 1, fullHouseWinners.length);
     setTimeout(() => showFinalWinnersBanner(winners, onClose), 4600);
   } else {
     showFinalWinnersBanner(winners, onClose);

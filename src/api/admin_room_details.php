@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 
@@ -44,10 +45,10 @@ $winnersStmt = $pdo->prepare(
      JOIN winner_claims wc ON wc.id = rpw.winner_claim_id
      JOIN users u ON u.id = wc.user_id
      WHERE rpw.room_id = ?
-     ORDER BY rpw.awarded_at ASC'
+     ORDER BY rpw.awarded_at ASC, rpw.id ASC'
 );
 $winnersStmt->execute([$room['id']]);
-$winners = $winnersStmt->fetchAll();
+$winners = FullHouse::annotate($winnersStmt->fetchAll());
 
 json_ok([
     'room' => [
@@ -55,6 +56,7 @@ json_ok([
         'title' => $room['title'],
         'status' => $room['status'],
         'max_players' => (int)$room['max_players'],
+        'full_house_winners' => FullHouse::configured($room),
         'player_count' => count($players),
         'host_name' => $host['name'] ?? null,
         'host_email' => $host['email'] ?? null,

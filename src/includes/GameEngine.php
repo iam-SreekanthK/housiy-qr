@@ -5,6 +5,7 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/Realtime.php';
 require_once __DIR__ . '/RedisCache.php';
 require_once __DIR__ . '/PublicEmailMask.php';
+require_once __DIR__ . '/FullHouse.php';
 
 final class GameEngine
 {
@@ -252,10 +253,10 @@ final class GameEngine
              FROM room_prize_winners rpw
              JOIN winner_claims wc ON wc.id = rpw.winner_claim_id
              JOIN users u ON u.id = wc.user_id
-             WHERE rpw.room_id = ? ORDER BY wc.claimed_at ASC, rpw.prize_type ASC'
+             WHERE rpw.room_id = ? ORDER BY wc.claimed_at ASC, rpw.prize_type ASC, rpw.id ASC'
         );
         $winnersStmt->execute([(int)$room['id']]);
-        $winners = $winnersStmt->fetchAll(PDO::FETCH_ASSOC);
+        $winners = FullHouse::annotate($winnersStmt->fetchAll(PDO::FETCH_ASSOC));
         // Use the canonical participant + winner masking context for the final card.
         $maskPlayersStmt = $pdo->prepare(
             'SELECT u.id, u.name, u.email FROM room_players rp JOIN users u ON u.id = rp.user_id
@@ -318,6 +319,19 @@ final class GameEngine
         foreach ($prizesEnabled as $prizeType) {
             if (!isset($wonSet[$prizeType])) {
                 return false; // at least one enabled prize is still unclaimed
+            }
+        }
+
+        // Several Full House winners: keep playing until every slot is filled
+        // (slots = the host's choice, capped at the number of players).
+        if (in_array('FULL_HOUSE', $prizesEnabled, true) && FullHouse::configured($freshRoom) > 1) {
+            $activeStmt = $pdo->prepare('SELECT COUNT(*) FROM room_players WHERE room_id = ? AND is_active = 1');
+            $activeStmt->execute([$freshRoom['id']]);
+            $slots = FullHouse::slots($freshRoom, (int)$activeStmt->fetchColumn());
+            $fhWonStmt = $pdo->prepare('SELECT COUNT(*) FROM room_prize_winners WHERE room_id = ? AND prize_type = "FULL_HOUSE"');
+            $fhWonStmt->execute([$freshRoom['id']]);
+            if ((int)$fhWonStmt->fetchColumn() < $slots) {
+                return false; // Full House still has winners to come
             }
         }
 

@@ -246,7 +246,8 @@ async function tryLoadHostTicket(alreadyRetried = false) {
     hostMarkedSet = new Set(res.marked_numbers || []);
     document.getElementById('playAlongPrompt').classList.add('d-none');
     document.getElementById('hostTicketPanel').classList.remove('d-none');
-    buildHostClaimButtons(res.room.prizes_enabled, res.prizes_won, res.prizes_won_by_me || []);
+    syncHostClaimStateFrom(res);
+    buildHostClaimButtons(res.room.prizes_enabled);
     renderHostTicket(res);
     return;
   }
@@ -299,14 +300,8 @@ function renderHostTicket(res) {
   });
   renderTicket(document.getElementById('hostTicketContainer'), hostTicketGrid, hostCalledSet, hostMarkedSet, markHostCell, hostTicketId);
 
-  document.querySelectorAll('#hostClaimButtons .claim-btn').forEach(btn => {
-    if (res.prizes_won.includes(btn.dataset.prize)) {
-      btn.disabled = true;
-      btn.textContent = PRIZE_LABELS[btn.dataset.prize] || btn.dataset.prize;
-      btn.classList.add('claimed');
-      if ((res.prizes_won_by_me || []).includes(btn.dataset.prize)) btn.classList.add('claimed-self');
-    }
-  });
+  syncHostClaimStateFrom(res);
+  refreshHostClaimButtons();
 }
 
 /** Host self-marks a called number on their own "play along" ticket. */
@@ -359,15 +354,37 @@ async function markHostCell(number) {
   }
 }
 
-function buildHostClaimButtons(prizesEnabled, prizesWon, prizesWonByMe = []) {
+// Shared claim state for the host's own ticket. Full House can have several
+// winners: total = slots in the room, remaining = still open ("Full House (2)").
+let hostClaimState = { prizesWon: [], prizesWonByMe: [], full_house_total: 1, full_house_remaining: 1 };
+let hostMultiFullHouse = false;
+
+function syncHostClaimStateFrom(res) {
+  hostClaimState = {
+    prizesWon: Array.isArray(res.prizes_won) ? res.prizes_won.slice() : hostClaimState.prizesWon,
+    prizesWonByMe: Array.isArray(res.prizes_won_by_me) ? res.prizes_won_by_me.slice() : hostClaimState.prizesWonByMe,
+    full_house_total: Number(res.room?.full_house_total ?? hostClaimState.full_house_total) || 1,
+    full_house_remaining: Number(res.room?.full_house_remaining ?? hostClaimState.full_house_remaining),
+  };
+  hostMultiFullHouse = hostClaimState.full_house_total > 1;
+}
+
+function refreshHostClaimButtons() {
+  document.querySelectorAll('#hostClaimButtons .claim-btn').forEach(btn => {
+    applyClaimButtonState(btn, btn.dataset.prize, hostClaimState, PRIZE_LABELS[btn.dataset.prize] || btn.dataset.prize);
+  });
+}
+
+function buildHostClaimButtons(prizesEnabled) {
   const container = document.getElementById('hostClaimButtons');
   container.innerHTML = prizesEnabled.map(p => `
-    <button class="btn btn-sm btn-outline-glass claim-btn${prizesWon.includes(p) ? ' claimed' : ''}${prizesWonByMe.includes(p) ? ' claimed-self' : ''}" data-prize="${p}" ${prizesWon.includes(p) ? 'disabled' : ''}>
+    <button class="btn btn-sm btn-outline-glass claim-btn" data-prize="${p}">
       ${PRIZE_LABELS[p] || p}
     </button>`).join('');
   container.querySelectorAll('.claim-btn').forEach(btn => {
     btn.addEventListener('click', () => submitHostClaim(btn.dataset.prize, btn));
   });
+  refreshHostClaimButtons();
 }
 
 async function submitHostClaim(prizeType, btn) {
@@ -386,8 +403,14 @@ async function submitHostClaim(prizeType, btn) {
     : await apiPost('claim.php', { room_code: roomCode, prize_type: prizeType });
   if (res.success && res.valid) {
     showToast(`🎉 Valid claim! You won ${PRIZE_LABELS[prizeType]}`, 'success');
-    btn.textContent = PRIZE_LABELS[prizeType];
-    btn.classList.add('claimed', 'claimed-self');
+    if (!hostClaimState.prizesWonByMe.includes(prizeType)) hostClaimState.prizesWonByMe.push(prizeType);
+    if (prizeType === 'FULL_HOUSE' && res.full_house_remaining != null) {
+      hostClaimState.full_house_remaining = Number(res.full_house_remaining);
+      if (hostClaimState.full_house_remaining <= 0 && !hostClaimState.prizesWon.includes(prizeType)) hostClaimState.prizesWon.push(prizeType);
+    } else if (!hostClaimState.prizesWon.includes(prizeType)) {
+      hostClaimState.prizesWon.push(prizeType);
+    }
+    refreshHostClaimButtons(); // own button turns green; bracket count updates
   } else {
     showToast(res.reason || res.error || 'Claim not valid yet', 'warning');
     btn.textContent = original;
@@ -405,6 +428,17 @@ function renderState(res) {
   autoCallIntervalSeconds = res.room.auto_call_interval_seconds || 5;
   setCallPace(autoCallIntervalSeconds);
   syncAutoCallUi(res.room);
+
+  // Keep the Full House counter in step with the canonical room snapshot.
+  if (res.room.full_house_total != null) {
+    hostClaimState.full_house_total = Number(res.room.full_house_total) || 1;
+    hostClaimState.full_house_remaining = Number(res.room.full_house_remaining) || 0;
+    hostMultiFullHouse = hostClaimState.full_house_total > 1;
+    if (hostClaimState.full_house_remaining <= 0 && (res.winners || []).some(w => w.prize_type === 'FULL_HOUSE') && !hostClaimState.prizesWon.includes('FULL_HOUSE')) {
+      hostClaimState.prizesWon.push('FULL_HOUSE');
+    }
+    refreshHostClaimButtons();
+  }
 
   document.getElementById('roomStatusPill').innerHTML = statusPill(res.room.status);
   document.getElementById('playerCount').textContent = res.room.player_count;
@@ -480,7 +514,7 @@ function renderState(res) {
     winnersList.innerHTML = res.winners.map(w => `
       <div class="winner-item">
         <span class="winner-item-prizecol">
-          <span class="winner-item-prize">${escapeHtml(w.prize_type.replace('_',' '))}</span>
+          <span class="winner-item-prize">${escapeHtml(winnerListPrizeLabel(w, w.prize_type.replace('_',' '), hostMultiFullHouse || res.winners.filter(x => x.prize_type === 'FULL_HOUSE').length > 1))}</span>
           ${w.claimed_at ? `<span class="winner-item-time">${escapeHtml(formatLocalTimeSeconds(w.claimed_at))}</span>` : ''}
         </span>
         <span class="winner-item-info">
@@ -495,18 +529,18 @@ function renderState(res) {
     // (host reopens/refreshes a completed dashboard), just record what's
     // already there — show the winners list as plain info, no replayed
     // banners/confetti/winner card.
-    previousWinnerKeys = new Set(res.winners.map(w => w.prize_type));
+    previousWinnerKeys = new Set(res.winners.map(w => winnerKey(w.prize_type, w.winner_position)));
     if (res.game.status === 'ENDED' || res.room.status === 'COMPLETED') {
       finalWinnersShown = true;
     }
   } else {
     res.winners.forEach(w => {
-      const key = w.prize_type;
+      const key = winnerKey(w.prize_type, w.winner_position);
       if (!previousWinnerKeys.has(key)) {
-        announceRoomWinnerOnce(w.winner_name, w.prize_type, w.winner_email);
+        announceRoomWinnerOnce(w.winner_name, w.prize_type, w.winner_email, w.winner_position || 1, hostClaimState.full_house_total || 1);
       }
     });
-    previousWinnerKeys = new Set(res.winners.map(w => w.prize_type));
+    previousWinnerKeys = new Set(res.winners.map(w => winnerKey(w.prize_type, w.winner_position)));
 
     // Once the game is over — every enabled prize actually claimed
     // (GameEngine::checkAndAutoEnd), or the host manually clicked "End
@@ -742,14 +776,21 @@ window.addEventListener('housiy:realtime', (event) => {
   if (type === 'prize_won') {
     const prize = String(data.prize_type || '').toUpperCase();
     const winnerName = String(data.winner_name || data.player_name || '').trim();
-    if (prize && winnerName && !previousWinnerKeys.has(prize)) {
-      previousWinnerKeys.add(prize);
-      announceRoomWinnerOnce(winnerName, prize, data.winner_email || null);
+    const position = Number(data.winner_position) || 1;
+    const eventKey = winnerKey(prize, position);
+    if (prize === 'FULL_HOUSE' && data.full_house_total != null) {
+      hostClaimState.full_house_total = Number(data.full_house_total) || 1;
+      hostClaimState.full_house_remaining = Number(data.full_house_remaining) || 0;
+      hostMultiFullHouse = hostClaimState.full_house_total > 1;
+      if (hostClaimState.full_house_remaining <= 0 && !hostClaimState.prizesWon.includes(prize)) hostClaimState.prizesWon.push(prize);
+    } else if (prize && !hostClaimState.prizesWon.includes(prize)) {
+      hostClaimState.prizesWon.push(prize);
     }
-    if (prize) {
-      const btn = document.querySelector(`#hostClaimButtons .claim-btn[data-prize="${CSS.escape(prize)}"]`);
-      if (btn) { btn.disabled = true; btn.classList.add('claimed'); btn.classList.remove('claimed-self'); btn.textContent = PRIZE_LABELS[prize] || prize; }
+    if (prize && winnerName && !previousWinnerKeys.has(eventKey)) {
+      previousWinnerKeys.add(eventKey);
+      announceRoomWinnerOnce(winnerName, prize, data.winner_email || null, position, data.full_house_total || 1);
     }
+    if (prize) refreshHostClaimButtons();
     // Event-triggered canonical refresh updates the winners list immediately
     // and covers gateway payloads that omit winner details. No timer polling.
     void poll().catch(error => console.warn('[Housiy host] prize event reconciliation failed:', error));

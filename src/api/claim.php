@@ -6,6 +6,7 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/Auth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/ClaimValidator.php';
 require_once __DIR__ . '/../includes/MarkBuffer.php';
 require_once __DIR__ . '/../includes/PublicEmailMask.php';
@@ -78,14 +79,36 @@ try {
 }
 EndpointProfiler::stop($claimFlushSpan);
 
+$awardedPosition = 1;
+$fullHouseTotal = 1;
+
 $claimTransactionSpan = EndpointProfiler::start('claim.transaction');
 try {
     $pdo->beginTransaction();
     // Lock to prevent two simultaneous claims for the same prize racing.
     $lockStmt = EndpointProfiler::query($pdo, 'claim.room_lock', 'SELECT id FROM rooms WHERE id = ? FOR UPDATE', [$room['id']]);
 
-    $wonStmt = EndpointProfiler::query($pdo, 'claim.prize_winner_lookup', 'SELECT id FROM room_prize_winners WHERE room_id = ? AND prize_type = ? LIMIT 1', [$room['id'], $prizeType]);
-    $alreadyWon = $wonStmt->fetch();
+    // Who has already won this prize. Every prize is single-winner except
+    // Full House, which has up to FullHouse::MAX_WINNERS slots (host's choice,
+    // capped at the number of players). $alreadyWon means "no slot left".
+    $wonStmt = EndpointProfiler::query($pdo, 'claim.prize_winner_lookup',
+        'SELECT rpw.id, wc.user_id FROM room_prize_winners rpw JOIN winner_claims wc ON wc.id = rpw.winner_claim_id WHERE rpw.room_id = ? AND rpw.prize_type = ?',
+        [$room['id'], $prizeType]);
+    $wonRows = $wonStmt->fetchAll();
+    $winnersSoFar = count($wonRows);
+    $slots = 1;
+    if ($prizeType === 'FULL_HOUSE' && FullHouse::configured($room) > 1) {
+        $activeStmt = EndpointProfiler::query($pdo, 'claim.active_players', 'SELECT COUNT(*) FROM room_players WHERE room_id = ? AND is_active = 1', [$room['id']]);
+        $slots = FullHouse::slots($room, (int)$activeStmt->fetchColumn());
+    }
+    $fullHouseTotal = $slots;
+    $alreadyWon = $winnersSoFar >= $slots;
+    // A player can take only one Full House slot.
+    $userAlreadyWon = false;
+    foreach ($wonRows as $wonRow) {
+        if ((int)$wonRow['user_id'] === (int)$user['id']) { $userAlreadyWon = true; break; }
+    }
+    $awardedPosition = $winnersSoFar + 1;
 
     $calledStmt = EndpointProfiler::query($pdo, 'claim.called_numbers', 'SELECT number FROM called_numbers WHERE game_id = ?', [$game['id']]);
     $calledNumbers = array_map('intval', $calledStmt->fetchAll(PDO::FETCH_COLUMN));
@@ -142,10 +165,16 @@ try {
         $validation = ClaimValidator::validate($prizeType, $grid, $calledNumbers, $markedNumbers);
     }
 
-    $isValid = $validation['valid'] && !$alreadyWon;
-    $reason = $alreadyWon
-        ? 'This prize has already been won by another player.'
-        : $validation['reason'];
+    $isValid = $validation['valid'] && !$alreadyWon && !$userAlreadyWon;
+    if ($alreadyWon) {
+        $reason = $slots > 1
+            ? 'All Full House prizes have already been won.'
+            : 'This prize has already been won by another player.';
+    } elseif ($userAlreadyWon) {
+        $reason = 'You have already won Full House.';
+    } else {
+        $reason = $validation['reason'];
+    }
 
     EndpointProfiler::query($pdo, 'claim.insert',
         'INSERT INTO winner_claims (room_id, game_id, ticket_id, user_id, prize_type, is_valid, reason)
@@ -157,10 +186,10 @@ try {
 
     if ($isValid) {
         EndpointProfiler::query($pdo, 'claim.award_insert',
-            'INSERT INTO room_prize_winners (room_id, prize_type, winner_claim_id) VALUES (?, ?, ?)',
-            [$room['id'], $prizeType, $claimId]
+            'INSERT INTO room_prize_winners (room_id, prize_type, winner_position, winner_claim_id) VALUES (?, ?, ?, ?)',
+            [$room['id'], $prizeType, $awardedPosition, $claimId]
         );
-        GameEngine::log($pdo, (int)$room['id'], (int)$game['id'], 'PLAYER', (int)$user['id'], 'PRIZE_WON', ['prize_type' => $prizeType]);
+        GameEngine::log($pdo, (int)$room['id'], (int)$game['id'], 'PLAYER', (int)$user['id'], 'PRIZE_WON', ['prize_type' => $prizeType, 'winner_position' => $awardedPosition]);
 
         // A claim just landed — check whether every prize enabled for this
         // room now has a winner (covers Full House as the natural closing
@@ -203,6 +232,13 @@ if ($isValid) {
         if ((int)$maskedPlayer['id'] === (int)$user['id']) { $maskedEmail = (string)($maskedPlayer['email'] ?? ''); break; }
     }
     $claimEvent = ['prize_type' => $prizeType, 'winner_name' => (string)$user['name'], 'winner_email' => $maskedEmail];
+    if ($prizeType === 'FULL_HOUSE') {
+        // Lets every client update the "Full House (n)" counter and give each
+        // Full House winner their own announcement without a refetch.
+        $claimEvent['winner_position'] = $awardedPosition;
+        $claimEvent['full_house_total'] = $fullHouseTotal;
+        $claimEvent['full_house_remaining'] = max(0, $fullHouseTotal - $awardedPosition);
+    }
     // Publish exactly one canonical room-wide winner event. Publishing both
     // prize_claimed and prize_won caused two WebSocket deliveries for the same
     // claim; older clients could speak the same winner announcement twice.
@@ -220,4 +256,8 @@ if (!$isValid) {
     ], 200);
 }
 
-json_ok(['valid' => true, 'prize_type' => $prizeType, 'winner' => $user['name']]);
+json_ok([
+    'valid' => true, 'prize_type' => $prizeType, 'winner' => $user['name'],
+    'winner_position' => $awardedPosition,
+    'full_house_remaining' => $prizeType === 'FULL_HOUSE' ? max(0, $fullHouseTotal - $awardedPosition) : 0,
+]);

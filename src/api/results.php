@@ -7,6 +7,7 @@ require_once __DIR__ . '/../includes/Auth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
 require_once __DIR__ . '/../includes/RoomState.php';
+require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/PublicEmailMask.php';
 
 $user = Auth::requireUser();
@@ -51,6 +52,7 @@ if (!$workerAlive) {
 }
 
 $game = $state['game'];
+$fullHouseProgress = FullHouse::progress($room, $state['winners'] ?? [], (int)($state['player_count'] ?? 0));
 $autoCallSecondsRemaining = GameEngine::autoCallSecondsRemaining($room, $game, $state['last_called_at'] ?? null, $state['winners'] ?? []);
 
 // A rematch prompt is a one-time invitation, not a property of revisiting a
@@ -90,6 +92,11 @@ json_ok([
         'player_count' => $state['player_count'],
         'max_players' => (int)$room['max_players'],
         'prizes_enabled' => json_decode($room['prizes_enabled'], true),
+        // Full House winner slots (1 unless the host chose more). Total is capped
+        // at the player count; remaining drops as each winner is awarded.
+        'full_house_winners' => FullHouse::configured($room),
+        'full_house_total' => $fullHouseProgress['total'],
+        'full_house_remaining' => $fullHouseProgress['remaining'],
         'auto_call_enabled' => (bool)($room['auto_call_enabled'] ?? false),
         'auto_call_interval_seconds' => $room['auto_call_interval_seconds'] !== null ? (int)$room['auto_call_interval_seconds'] : null,
         'auto_call_seconds_remaining' => $autoCallSecondsRemaining,

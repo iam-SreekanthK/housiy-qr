@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     max_players     SMALLINT UNSIGNED NOT NULL DEFAULT 100,
     status          ENUM('LOBBY','LIVE','PAUSED','COMPLETED','CANCELLED') NOT NULL DEFAULT 'LOBBY',
     prizes_enabled  JSON NOT NULL, -- e.g. ["FIRST_FIVE","TOP_ROW","MIDDLE_ROW","BOTTOM_ROW","FULL_HOUSE"]
+    full_house_winners TINYINT UNSIGNED NOT NULL DEFAULT 1, -- how many players can win Full House (1..5)
     auto_call_enabled TINYINT(1) NOT NULL DEFAULT 0, -- host opted in to automatic number calling
     auto_call_interval_seconds SMALLINT UNSIGNED NULL DEFAULT NULL, -- seconds between automatic calls, when enabled
     rematch_room_code CHAR(8) NULL DEFAULT NULL, -- set once the host starts a rematch from this room
@@ -195,9 +196,10 @@ CREATE TABLE IF NOT EXISTS room_prize_winners (
     id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     room_id         BIGINT UNSIGNED NOT NULL,
     prize_type      ENUM('FIRST_FIVE','TOP_ROW','MIDDLE_ROW','BOTTOM_ROW','FULL_HOUSE') NOT NULL,
+    winner_position TINYINT UNSIGNED NOT NULL DEFAULT 1, -- 1 = first winner; >1 only for FULL_HOUSE when several winners are configured
     winner_claim_id BIGINT UNSIGNED NOT NULL,
     awarded_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_room_prize (room_id, prize_type),
+    UNIQUE KEY uq_room_prize_pos (room_id, prize_type, winner_position),
     CONSTRAINT fk_rpw_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
     CONSTRAINT fk_rpw_claim FOREIGN KEY (winner_claim_id) REFERENCES winner_claims(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Host Dashboard — Housiy Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+<link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link href="assets/css/style.css" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/img/ticket-logo.svg">
+<link rel="alternate icon" href="assets/img/favicon.ico">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body class="app-shell host-shell">
+
+<nav class="navbar glass px-4 py-2">
+  <a href="index.html" class="brand fs-4 text-decoration-none"><img src="assets/img/ticket-logo.svg" class="brand-logo" alt="" width="34" height="20"> Housiy Live</a>
+  <span class="ms-auto text-dim small d-none d-sm-inline">Host Dashboard</span>
+  <span class="nav-game-timer d-none" id="gameTimer" title="Time since the game started">00:00</span>
+  <button class="btn-sound ms-3" id="soundToggle" type="button" title="Hear called numbers read aloud"></button>
+  <button class="hamburger-btn ms-2 d-lg-none" id="hamburgerBtn" type="button" aria-label="Menu">☰</button>
+</nav>
+
+<div class="mobile-menu" id="mobileMenu">
+  <div class="mobile-menu-item">
+    <div>
+      <div class="text-dim small">ROOM ID — share with players</div>
+      <div class="room-code-display room-code-display-sm" id="mobileRoomCodeText">—</div>
+    </div>
+    <button class="btn btn-sm btn-outline-glass" id="mobileCopyBtn">Copy</button>
+  </div>
+  <div class="mobile-menu-item mobile-menu-item-qr">
+    <div>
+      <div class="text-dim small">QR CODE — players scan to join</div>
+    </div>
+    <button class="btn btn-sm btn-outline-glass" id="mobileQrBtn" type="button">QR</button>
+  </div>
+</div>
+
+<div class="rematch-modal-overlay d-none" id="rematchModalOverlay">
+  <div class="glass rematch-modal-card">
+    <h6 class="mb-3">Start Rematch</h6>
+    <div class="form-check form-switch mb-2">
+      <input class="form-check-input" type="checkbox" id="rematchAutoCallToggle">
+      <label class="form-check-label small" for="rematchAutoCallToggle">Auto-call numbers</label>
+    </div>
+    <div id="rematchIntervalWrap">
+      <label class="form-label text-dim small mb-1">Read next number every</label>
+      <div class="d-flex align-items-center gap-2">
+        <input id="rematchIntervalInput" type="number" class="form-control form-control-sm" min="3" max="60" style="max-width:100px;">
+        <span class="text-dim small">seconds</span>
+      </div>
+      <div class="text-dim small mt-1" id="rematchIntervalHint"></div>
+    </div>
+    <div class="d-flex justify-content-end gap-2 mt-3">
+      <button type="button" class="btn btn-outline-glass btn-sm" id="rematchModalCancel">Cancel</button>
+      <button type="button" class="btn btn-accent btn-sm" id="rematchModalConfirm">Start Rematch</button>
+    </div>
+  </div>
+</div>
+
+<div class="app-main">
+  <div class="host-layout">
+
+    <div class="host-left-col">
+      <div class="glass p-2 card-anim area-roomcard compact-card">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <div class="text-dim small">ROOM ID</div>
+            <div class="room-code-display room-code-display-sm" id="roomCodeText">—</div>
+          </div>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-glass" id="qrBtn" type="button" title="Show QR code for players to scan and join">QR</button>
+            <button class="btn btn-sm btn-outline-glass" id="copyBtn">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass p-2 card-anim area-controls">
+        <h6 class="text-dim mb-1 small">Game Controls</h6>
+        <div class="controls-grid">
+          <button class="btn btn-accent btn-sm btn-icon" id="startBtn" title="Start Game"><span class="ic">▶</span><span class="btn-label">Start Game</span><span class="btn-label-short">Start</span></button>
+          <button class="btn btn-outline-glass btn-sm btn-icon" id="pauseResumeBtn" disabled title="Pause"><span class="ic">⏸</span><span class="btn-label">Pause</span><span class="btn-label-short">Pause</span></button>
+          <button class="btn btn-accent btn-sm btn-icon" id="nextBtn" disabled title="Call Next Number"><span class="ic">🔢</span><span class="btn-label">Call Next Number</span><span class="btn-label-short">Next</span></button>
+          <button class="btn btn-outline-danger btn-sm btn-icon" id="endBtn" disabled title="End Game"><span class="ic">■</span><span class="btn-label">End Game</span><span class="btn-label-short">End</span></button>
+          <button class="btn btn-accent btn-sm btn-icon d-none" id="rematchBtn" title="Start Rematch"><span class="ic">🔁</span><span class="btn-label">Start Rematch</span><span class="btn-label-short">Rematch</span></button>
+        </div>
+      </div>
+
+      <div class="glass p-2 card-anim area-winners collapsible-room-card" data-room-card="winners">
+        <div class="room-card-static-head"><span>Winners</span></div>
+        <div class="room-card-content" id="winnersContent"><div id="winnersList"><p class="text-dim small mb-0">No winners yet.</p></div></div>
+      </div>
+      <div class="glass p-2 card-anim area-players collapsible-room-card" data-room-card="players">
+        <div class="room-card-static-head participants-header"><span>Participants (<span id="participantsCount">0</span>)</span><button type="button" class="room-card-toggle participants-toggle" id="participantsToggle" aria-label="Expand participants" title="Expand participants" aria-expanded="false" hidden><span class="room-card-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span></button></div>
+        <div class="room-card-content" id="playersContent"><div id="playersList" class="players-list"><p class="text-dim small mb-0">No players yet.</p></div></div>
+      </div>
+      <div class="glass p-2 card-anim area-gamedetails d-none collapsible-room-card" id="gameDetailsCard" data-room-card="details">
+        <div class="room-card-static-head"><span>Game Details</span></div>
+        <div class="room-card-content"><div class="game-details-list">
+          <div class="gd-row"><span class="gd-icon gd-icon-start" aria-hidden="true">▶</span><span class="gd-label">Started</span><span class="gd-value" id="gdStartTime">—</span></div>
+          <div class="gd-row"><span class="gd-icon gd-icon-end" aria-hidden="true">■</span><span class="gd-label">Completed</span><span class="gd-value" id="gdEndTime">—</span></div>
+          <div class="gd-row"><span class="gd-icon gd-icon-duration" aria-hidden="true">⏱</span><span class="gd-label">Duration</span><span class="gd-value gd-value-strong" id="gdDuration">—</span></div>
+        </div></div>
+      </div>
+      <section class="reaction-history-card glass collapsible-room-card" id="reactionHistoryCard" data-room-card="reactions" aria-labelledby="reactionHistoryTitle">
+        <div class="reaction-history-head"><button type="button" class="room-card-toggle" id="reactionHistoryToggle" aria-expanded="false"><span id="reactionHistoryTitle">Emoji reaction history</span><span class="reaction-history-count" id="reactionHistoryCount">0</span><span class="room-card-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span></button></div>
+        <div class="room-card-content" hidden><div class="reaction-history-list" id="reactionHistoryList"><p class="reaction-history-empty">Loading reaction history…</p></div></div>
+      </section>
+    </div>
+
+    <div class="host-right-col">
+      <div class="glass p-2 card-anim area-boardpanel">
+        <div class="board-panel-inner">
+          <div class="board-block">
+            <h6 class="text-dim mb-2 small flex-shrink-0">Number Board</h6>
+            <div id="numberBoard" class="number-board-holder"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass p-2 card-anim area-ticket">
+        <div class="current-number-bar">
+          <div class="current-number-display" id="currentNumberDisplay">–</div>
+          <div class="current-number-meta">
+            <div class="text-dim small">CURRENT NUMBER</div>
+            <div class="text-dim small"><span id="calledCount">0</span> / 90 called</div>
+            <div class="d-flex align-items-center gap-2 flex-nowrap mt-1 status-meta-row">
+              <div id="roomStatusPill"></div>
+              <span class="pill pill-auto d-none" id="autoCallBadge">🔁 Auto <span id="autoCallSeconds"></span></span>
+              <div class="text-dim small">Players: <span id="playerCount">0</span>/<span id="maxPlayers">100</span></div>
+            </div>
+          </div>
+          <button class="reaction-trigger" type="button" id="reactionTrigger" aria-label="Send emoji reaction" title="Send emoji reaction">😊</button>
+        </div>
+        <div id="playAlongPrompt">
+          <p class="text-dim small mb-1" id="playAlongStatus">Loading your ticket...</p>
+          <button class="btn btn-outline-glass btn-sm w-100 d-none" id="playAlongBtn">🎫 Retry</button>
+        </div>
+        <div id="hostTicketPanel" class="d-none flex-grow-1 d-flex flex-column" style="min-height:0;">
+          <div class="mb-1 flex-shrink-0">
+            <span class="text-dim small">Claim Prize</span>
+            <div class="claim-row claim-row-sm mt-1" id="hostClaimButtons"></div>
+          </div>
+          <p class="text-dim small mb-1 flex-shrink-0 ticket-hint">Listen for your numbers and tap them yourself</p>
+          <div id="hostTicketContainer" class="flex-grow-1" style="min-height:0;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+
+<div class="reaction-modal-backdrop" id="reactionModal" aria-hidden="true">
+  <section class="reaction-modal" role="dialog" aria-modal="true" aria-labelledby="reactionTitle">
+    <div class="reaction-modal-head"><div><h3 id="reactionTitle">Send a reaction</h3><p>Choose an emoji and who should see it.</p></div><button type="button" class="reaction-close" id="reactionClose" aria-label="Close">×</button></div>
+    <div class="reaction-emoji-grid" id="reactionEmojiGrid">
+      <button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="👏">👏</button><button type="button" data-emoji="🔥">🔥</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="😍">😍</button><button type="button" data-emoji="😮">😮</button><button type="button" data-emoji="🥳">🥳</button><button type="button" data-emoji="🙌">🙌</button><button type="button" data-emoji="💯">💯</button><button type="button" data-emoji="😢">😢</button>
+    </div>
+    <div class="reaction-targets"><button type="button" class="active" data-reaction-target="everyone">👥 Everyone</button><button type="button" data-reaction-target="player">👤 Specific player</button></div>
+    <div id="reactionPlayerWrap" class="d-none"><select id="reactionPlayerSelect" aria-label="Select player"><option value="">Choose a player…</option></select></div>
+    <button type="button" class="reaction-send" id="reactionSend">Send reaction</button>
+    <p class="reaction-note">Reactions float briefly on screen without a background card.</p>
+  </section>
+</div>
+<div class="reaction-float-layer" id="reactionFloatLayer" aria-live="polite"></div>
+
+<script src="assets/js/common.js?v=20261105-winner-privacy-emoji-rematch-v1"></script>
+<script src="assets/vendor/qrcode/qrcode.js" defer></script>
+<script src="assets/js/qr-join.js?v=20261113-qr-join" defer></script>
+<script src="assets/js/emoji-reactions.js" defer></script>
+<script src="assets/js/page-host.js?v=20261105-winner-privacy-emoji-rematch-v1" defer></script>
+<script src="assets/js/room-card-disclosure.js" defer></script>
+
+</body>
+</html>

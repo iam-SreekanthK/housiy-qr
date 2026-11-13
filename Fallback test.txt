@@ -1,0 +1,209 @@
+
+#!/usr/bin/env bash
+
+# ============================================================
+# HOUSIY WEBSOCKET FAILURE + FALLBACK + RECOVERY TEST
+# Development environment only
+# Run from Housiy project root using Git Bash
+# ============================================================
+
+COMPOSE="docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev"
+
+# ------------------------------------------------------------
+# LOAD ENVIRONMENT VARIABLES
+# ------------------------------------------------------------
+
+if [ ! -f deployment/docker/.env.dev ]; then
+    echo "ERROR: deployment/docker/.env.dev not found"
+    exit 1
+fi
+
+set -a
+source deployment/docker/.env.dev
+set +a
+
+echo ""
+echo "============================================================"
+echo "1. INITIAL CONTAINER STATUS"
+echo "============================================================"
+
+$COMPOSE ps
+
+# ------------------------------------------------------------
+# STOP WEBSOCKET GATEWAY
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "2. STOPPING WEBSOCKET GATEWAY"
+echo "============================================================"
+
+$COMPOSE stop realtime
+
+# ------------------------------------------------------------
+# CONFIRM GATEWAY STOPPED
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "3. VERIFY GATEWAY STOPPED"
+echo "============================================================"
+
+$COMPOSE ps realtime
+
+# ------------------------------------------------------------
+# WAIT 30 SECONDS FOR HTTP FALLBACK
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "4. WAITING 30 SECONDS FOR FALLBACK"
+echo "============================================================"
+
+for i in $(seq 30 -1 1); do
+    echo "Fallback test remaining: ${i}s"
+    sleep 1
+done
+
+# ------------------------------------------------------------
+# CHECK APPLICATION LOGS DURING OUTAGE
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "5. APPLICATION LOGS DURING OUTAGE"
+echo "============================================================"
+
+$COMPOSE logs --since=2m app
+$COMPOSE logs --since=2m php
+
+# ------------------------------------------------------------
+# RESTORE WEBSOCKET GATEWAY
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "6. STARTING WEBSOCKET GATEWAY"
+echo "============================================================"
+
+$COMPOSE start realtime
+
+# ------------------------------------------------------------
+# WAIT 30 SECONDS FOR RECONNECTION
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "7. WAITING FOR WEBSOCKET RECONNECTION"
+echo "============================================================"
+
+for i in $(seq 30 -1 1); do
+    echo "Reconnect test remaining: ${i}s"
+    sleep 1
+done
+
+# ------------------------------------------------------------
+# CHECK REALTIME GATEWAY LOGS
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "8. WEBSOCKET RECONNECTION LOGS"
+echo "============================================================"
+
+$COMPOSE logs --since=2m realtime
+
+# ------------------------------------------------------------
+# CHECK GATEWAY HEALTH
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "9. WEBSOCKET HEALTH"
+echo "============================================================"
+
+$COMPOSE exec -T realtime wget -qO- \
+    http://127.0.0.1:8090/healthz
+
+echo ""
+
+# ------------------------------------------------------------
+# CHECK REDIS PUB/SUB CHANNELS
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "10. REDIS PUB/SUB CHANNELS"
+echo "============================================================"
+
+if [ -n "$REDIS_PASSWORD" ]; then
+
+    $COMPOSE exec -T redis sh -lc \
+        'REDISCLI_AUTH="$1" redis-cli PUBSUB CHANNELS' \
+        sh "$REDIS_PASSWORD"
+
+else
+
+    echo "REDIS_PASSWORD not found in .env.dev"
+    echo "Trying Redis without authentication..."
+
+    $COMPOSE exec -T redis redis-cli PUBSUB CHANNELS
+
+fi
+
+# ------------------------------------------------------------
+# CHECK REDIS CONNECTIVITY
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "11. REDIS PING"
+echo "============================================================"
+
+if [ -n "$REDIS_PASSWORD" ]; then
+
+    $COMPOSE exec -T redis sh -lc \
+        'REDISCLI_AUTH="$1" redis-cli PING' \
+        sh "$REDIS_PASSWORD"
+
+else
+
+    $COMPOSE exec -T redis redis-cli PING
+
+fi
+
+# ------------------------------------------------------------
+# CHECK WEBSOCKET METRICS
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "12. FINAL WEBSOCKET METRICS"
+echo "============================================================"
+
+$COMPOSE exec -T realtime wget -qO- \
+    http://127.0.0.1:8090/metrics
+
+echo ""
+
+# ------------------------------------------------------------
+# FINAL CONTAINER STATUS
+# ------------------------------------------------------------
+
+echo ""
+echo "============================================================"
+echo "13. FINAL CONTAINER STATUS"
+echo "============================================================"
+
+$COMPOSE ps
+
+# ------------------------------------------------------------
+# CLEANUP ENVIRONMENT VARIABLES
+# ------------------------------------------------------------
+
+unset REDIS_PASSWORD MYSQL_ROOT_PASSWORD
+
+echo ""
+echo "============================================================"
+echo "WEBSOCKET FAILURE + FALLBACK + RECOVERY TEST COMPLETED"
+echo "============================================================"

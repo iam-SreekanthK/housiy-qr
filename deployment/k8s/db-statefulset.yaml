@@ -1,0 +1,96 @@
+# Rendered by the Jenkins pipeline (plain string substitution). Required
+# placeholder: NAMESPACE
+#
+# Applied ONLY on the very first deploy to a namespace (see the pipeline's
+# "Deploy (Kubernetes - stage/prod)" stage) - once housiy-db-0 exists,
+# later builds never touch this file again, so the running database and
+# its PVC are never disturbed by an app-only rollout.
+#
+# Prerequisite (created once per namespace, out of band - never by CI):
+#   kubectl create secret generic housiy-db-credentials -n <namespace> \
+#     --from-literal=DB_HOST=housiy-db \
+#     --from-literal=DB_NAME=housiy \
+#     --from-literal=DB_USER=<user> \
+#     --from-literal=DB_PASS=<password> \
+#     --from-literal=DB_ROOT_PASSWORD=<root-password>
+#
+# DB_HOST must be exactly "housiy-db" (the headless Service name in
+# db-service.yaml) when the database is running in-cluster - that's how
+# the app pod finds it.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: housiy-db
+  namespace: ${NAMESPACE}
+  labels:
+    app: housiy-db
+spec:
+  serviceName: housiy-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: housiy-db
+  template:
+    metadata:
+      labels:
+        app: housiy-db
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: housiy-db-credentials
+                  key: DB_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: housiy-db-credentials
+                  key: DB_NAME
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: housiy-db-credentials
+                  key: DB_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: housiy-db-credentials
+                  key: DB_PASS
+          volumeMounts:
+            - name: housiy-db-data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$(MYSQL_ROOT_PASSWORD)"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$(MYSQL_ROOT_PASSWORD)"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: housiy-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

@@ -1,0 +1,13 @@
+{
+  "name": "housiy-ui-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright UI test suite for the Housiy platform",
+  "scripts": {
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

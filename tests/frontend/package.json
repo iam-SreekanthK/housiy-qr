@@ -1,0 +1,12 @@
+{
+  "name": "housiy-frontend-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DOM-level tests of the browser code (jsdom, no browser binary needed)",
+  "scripts": {
+    "test": "node reactions-ui.test.js && node cards-and-formatting.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

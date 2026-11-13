@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Super Admin Login — Housiy Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+<link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link href="assets/css/style.css" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/img/ticket-logo.svg">
+<link rel="alternate icon" href="assets/img/favicon.ico">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body>
+<nav class="navbar glass px-4 py-2">
+  <span class="brand fs-3"><img src="assets/img/ticket-logo.svg" class="brand-logo" alt="" width="32" height="19"> Housiy Live — Admin</span>
+</nav>
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-5">
+      <div class="glass p-5 card-anim mt-5">
+        <h4 class="mb-1 brand">Super Admin</h4>
+        <p class="text-dim mb-4">Restricted access</p>
+        <div class="mb-3">
+          <label class="form-label text-dim">Username</label>
+          <input id="username" class="form-control" autocomplete="username">
+        </div>
+        <div class="mb-3">
+          <label class="form-label text-dim">Password</label>
+          <input id="password" type="password" class="form-control" autocomplete="current-password">
+        </div>
+        <div class="text-danger small mb-3" id="loginError"></div>
+        <button class="btn btn-accent w-100" id="loginBtn">Sign in</button>
+        <div class="text-center mt-3">
+          <a href="index.html" class="text-dim small">← Back to player site</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/js/common.js"></script>
+<script src="assets/js/page-admin-login.js" defer></script>
+</body>
+</html>

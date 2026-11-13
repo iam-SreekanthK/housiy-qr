@@ -1,0 +1,20 @@
+# local-path StorageClass for MySQL persistent storage.
+# Requires the Rancher local-path-provisioner to be installed in the
+# cluster (kube-system or its own namespace) - this StorageClass only
+# points to it, it doesn't install it:
+#   kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
+#
+# local-path binds a pod's volume to a directory on whichever node the
+# pod is scheduled on - it is NOT a shared/networked volume. That's why
+# volumeBindingMode is WaitForFirstConsumer: the PV can't be created
+# until the MySQL pod is scheduled, so the provisioner knows which node
+# to create the local directory on. This also means a MySQL pod using
+# this storage will always be rescheduled back to the same node.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain   # keep the data dir if the PVC is deleted - don't lose the DB by accident
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60">
+  <defs>
+    <linearGradient id="ticketGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b6316c"/>
+      <stop offset="100%" stop-color="#0f8f8a"/>
+    </linearGradient>
+    <clipPath id="ticketClip">
+      <path d="M6,10 h88 a4,4 0 0 1 4,4 v6 a5,5 0 0 0 0,10 v6 a5,5 0 0 1 0,10 v6 a4,4 0 0 1 -4,4 h-88 a4,4 0 0 1 -4,-4 v-6 a5,5 0 0 0 0,-10 v-6 a5,5 0 0 1 0,-10 v-6 a4,4 0 0 1 4,-4 z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Plain ticket shape, single gradient fill -->
+  <path d="M6,10 h88 a4,4 0 0 1 4,4 v6 a5,5 0 0 0 0,10 v6 a5,5 0 0 1 0,10 v6 a4,4 0 0 1 -4,4 h-88 a4,4 0 0 1 -4,-4 v-6 a5,5 0 0 0 0,-10 v-6 a5,5 0 0 1 0,-10 v-6 a4,4 0 0 1 4,-4 z"
+        fill="url(#ticketGrad)"/>
+
+  <!-- Grid lines + a few numbers, clipped to the ticket outline -->
+  <g clip-path="url(#ticketClip)">
+    <g stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.3">
+      <line x1="6"  y1="30" x2="94" y2="30"/>
+      <line x1="29.3" y1="10" x2="29.3" y2="50"/>
+      <line x1="52.7" y1="10" x2="52.7" y2="50"/>
+      <line x1="76"  y1="10" x2="76"  y2="50"/>
+    </g>
+    <g font-family="'Space Mono', monospace" font-weight="700" fill="#ffffff" text-anchor="middle">
+      <text x="17.6" y="24" font-size="9">4</text>
+      <text x="64.3" y="24" font-size="9">23</text>
+      <text x="41"   y="44" font-size="9">56</text>
+      <text x="85"   y="44" font-size="9">78</text>
+    </g>
+  </g>
+</svg>

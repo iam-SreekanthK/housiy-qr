@@ -1,0 +1,25 @@
+# Rendered by the Jenkins pipeline (plain string substitution). Required
+# placeholder: NAMESPACE
+#
+# ClusterIP (internal-only - never exposed outside the cluster) and
+# headless (clusterIP: None) because it fronts a StatefulSet - pods get
+# stable DNS names (housiy-db-0.housiy-db.<namespace>.svc.cluster.local)
+# instead of load-balanced round-robin, which is what a single-instance
+# stateful MySQL needs.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-db
+  namespace: ${NAMESPACE}
+  labels:
+    app: housiy-db
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: housiy-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306

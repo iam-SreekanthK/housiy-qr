@@ -1,0 +1,47 @@
+# Real secrets - never commit. Keep .env.example up to date instead.
+.env
+.env.ci
+# Per-environment Compose files hold real secrets - never commit them.
+# (the *.example templates ARE committed)
+.env.uat
+.env.prod
+#deployment/docker/.env.dev
+deployment/docker/.env.uat
+deployment/docker/.env.prod
+# Legacy scratch copy of the env file; it contained real credentials.
+deployment/docker/env.txt
+
+# Rendered k8s manifests (generated per-deploy by the Jenkins pipeline,
+# not source - the ${VAR} templates in deployment/k8s/*.yaml are)
+deployment/k8s/*.rendered.yaml
+
+# Dependencies (repo-root only - anchored with a leading slash so this
+# doesn't also match src/assets/vendor/, which is a committed static
+# asset (Bootstrap), not a dependency to exclude)
+/vendor/
+node_modules/
+
+# Test/build output
+tests-results/
+tests/ui/playwright-report/
+tests/ui/test-results/
+tests/load/results/
+.phpunit.result.cache
+# Additional requested production environment filename
+deployment/docker/.env.production
+deployment/docker/.env.loadtest
+# generated test output
+tests/ui/visual-results/
+.test-run/
+
+# Environment files (any depth): real .env.dev/.env.uat/.env.prod hold secrets and
+# must never be committed. .env.example stays tracked. The release ZIP
+# intentionally ships them - store that ZIP privately.
+.env.dev
+**/.env.dev
+**/.env.uat
+**/.env.prod
+**/.env.production
+**/.env.loadtest
+!.env.example
+!**/.env.example

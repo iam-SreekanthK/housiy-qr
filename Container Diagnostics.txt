@@ -1,0 +1,185 @@
+
+#!/usr/bin/env bash
+
+# ============================================================
+# HOUSIY COMPLETE DOCKER + WEBSOCKET + REDIS + MYSQL DIAGNOSTICS
+# ============================================================
+
+COMPOSE="docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev"
+
+# Load environment variables from .env.dev
+set -a
+source deployment/docker/.env.dev
+set +a
+
+echo ""
+echo "============================================================"
+echo "1. DOCKER CONTAINER STATUS"
+echo "============================================================"
+$COMPOSE ps
+
+echo ""
+echo "============================================================"
+echo "2. DOCKER RESOURCE UTILIZATION"
+echo "============================================================"
+docker stats --no-stream
+
+echo ""
+echo "============================================================"
+echo "3. REALTIME GATEWAY LOGS"
+echo "============================================================"
+$COMPOSE logs --tail=100 realtime
+
+echo ""
+echo "============================================================"
+echo "4. REALTIME HEALTH ENDPOINT"
+echo "============================================================"
+$COMPOSE exec -T realtime wget -qO- http://127.0.0.1:8090/healthz
+echo ""
+
+echo ""
+echo "============================================================"
+echo "5. WEBSOCKET METRICS"
+echo "============================================================"
+$COMPOSE exec -T realtime wget -qO- http://127.0.0.1:8090/metrics
+echo ""
+
+echo ""
+echo "============================================================"
+echo "6. REDIS CONNECTIVITY"
+echo "============================================================"
+
+if [ -n "$REDIS_PASSWORD" ]; then
+    $COMPOSE exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" PING
+
+    echo ""
+    echo "Redis Pub/Sub channels:"
+    $COMPOSE exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" PUBSUB CHANNELS
+
+    echo ""
+    echo "Redis clients:"
+    $COMPOSE exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" INFO clients
+
+    echo ""
+    echo "Redis statistics:"
+    $COMPOSE exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" INFO stats
+
+    echo ""
+    echo "Redis memory:"
+    $COMPOSE exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" INFO memory
+else
+    echo "REDIS_PASSWORD not found in .env.dev"
+fi
+
+echo ""
+echo "============================================================"
+echo "7. PHP APPLICATION LOGS"
+echo "============================================================"
+$COMPOSE logs --tail=100 php
+
+echo ""
+echo "============================================================"
+echo "8. NGINX APPLICATION LOGS"
+echo "============================================================"
+$COMPOSE logs --tail=100 app
+
+echo ""
+echo "============================================================"
+echo "9. BACKGROUND WORKER LOGS"
+echo "============================================================"
+$COMPOSE logs --tail=150 worker
+
+echo ""
+echo "============================================================"
+echo "10. DATABASE CONTAINER LOGS"
+echo "============================================================"
+$COMPOSE logs --tail=100 db
+
+echo ""
+echo "============================================================"
+echo "11. DATABASE CONNECTION CONFIGURATION"
+echo "============================================================"
+$COMPOSE exec -T php sh -lc \
+'env | grep -E "^(DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|MYSQL_HOST|MYSQL_PORT|MYSQL_DATABASE|MYSQL_USER)="'
+
+echo ""
+echo "Worker database configuration:"
+$COMPOSE exec -T worker sh -lc \
+'env | grep -E "^(DB_HOST|DB_PORT|DB_DATABASE|DB_USERNAME|MYSQL_HOST|MYSQL_PORT|MYSQL_DATABASE|MYSQL_USER)="'
+
+echo ""
+echo "============================================================"
+echo "12. MYSQL AUTHENTICATED CONNECTIVITY"
+echo "============================================================"
+
+if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+    $COMPOSE exec -T db sh -lc \
+    'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"'
+else
+    echo "MYSQL_ROOT_PASSWORD not found in .env.dev"
+fi
+
+echo ""
+echo "============================================================"
+echo "13. MYSQL SERVER STATUS"
+echo "============================================================"
+
+if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+    $COMPOSE exec -T db sh -lc \
+    'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -Nse "SHOW GLOBAL STATUS WHERE Variable_name IN (\"Threads_connected\",\"Threads_running\",\"Questions\",\"Queries\",\"Slow_queries\",\"Connections\",\"Uptime\");"'
+else
+    echo "MYSQL_ROOT_PASSWORD not found in .env.dev"
+fi
+
+echo ""
+echo "============================================================"
+echo "14. MYSQL PROCESS LIST"
+echo "============================================================"
+
+if [ -n "$MYSQL_ROOT_PASSWORD" ]; then
+    $COMPOSE exec -T db sh -lc \
+    'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW FULL PROCESSLIST;"'
+else
+    echo "MYSQL_ROOT_PASSWORD not found in .env.dev"
+fi
+
+echo ""
+echo "============================================================"
+echo "15. RECENT WORKER ERRORS"
+echo "============================================================"
+$COMPOSE logs --since=10m worker 2>&1 | grep -Ei \
+'error|exception|refused|failed|warning|unavailable' || true
+
+echo ""
+echo "============================================================"
+echo "16. RECENT REALTIME ERRORS"
+echo "============================================================"
+$COMPOSE logs --since=10m realtime 2>&1 | grep -Ei \
+'error|exception|refused|failed|warning|disconnect' || true
+
+echo ""
+echo "============================================================"
+echo "17. RECENT DATABASE ERRORS"
+echo "============================================================"
+$COMPOSE logs --since=10m db 2>&1 | grep -Ei \
+'error|exception|refused|failed|warning|denied' || true
+
+echo ""
+echo "============================================================"
+echo "18. DOCKER NETWORKS"
+echo "============================================================"
+docker network ls
+
+echo ""
+echo "============================================================"
+echo "19. COMPOSE SERVICE CONFIGURATION"
+echo "============================================================"
+$COMPOSE config --services
+
+# Remove loaded credentials from the current shell
+unset REDIS_PASSWORD MYSQL_ROOT_PASSWORD
+
+echo ""
+echo "============================================================"
+echo "DIAGNOSTICS COMPLETED"
+echo "============================================================"

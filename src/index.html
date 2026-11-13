@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Housiy Live — Play Online Housiy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+<link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link href="assets/css/style.css" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/img/ticket-logo.svg">
+<link rel="alternate icon" href="assets/img/favicon.ico">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body class="app-shell">
+
+<nav class="navbar glass px-4 py-2">
+  <span class="brand fs-4"><img src="assets/img/ticket-logo.svg" class="brand-logo" alt="" width="34" height="20"> Housiy Live</span>
+</nav>
+
+<div class="app-main landing-main">
+  <div class="landing-wrap">
+
+    <div class="text-center card-anim flex-shrink-0">
+      <p class="text-dim small mb-0">Create a room in seconds, share the Room ID, and call numbers live</p>
+    </div>
+
+    <div class="glass p-3 p-md-4 card-anim flex-shrink-0" id="identityCard">
+      <div class="invite-banner d-none" id="inviteBanner" role="status" aria-live="polite">
+        <span class="invite-banner-text" id="inviteBannerText"></span>
+        <button type="button" class="invite-banner-link d-none" id="inviteNotYouBtn">Not you?</button>
+      </div>
+      <h6 class="text-dim mb-2 small">Who's playing?</h6>
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label text-dim small mb-1">Your name</label>
+          <input id="nameInput" class="form-control form-control-sm" placeholder="e.g. Sreekanth K">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label text-dim small mb-1">Your email</label>
+          <input id="emailInput" type="email" class="form-control form-control-sm" placeholder="you@example.com">
+        </div>
+      </div>
+      <div class="text-danger small mt-2" id="identityError"></div>
+
+      <hr class="border-secondary my-3">
+
+      <ul class="nav nav-pills mb-3" id="modeTabs">
+        <li class="nav-item"><button class="nav-link active" data-mode="join">Join a Room</button></li>
+        <li class="nav-item"><button class="nav-link" data-mode="host">Host a Room</button></li>
+      </ul>
+
+      <div id="joinPane">
+        <label class="form-label text-dim small mb-1">Room ID</label>
+        <div class="d-flex gap-2">
+          <input id="roomCodeInput" class="form-control form-control-sm text-uppercase" placeholder="e.g. AB3K9XQ2" maxlength="8">
+          <button class="btn btn-accent btn-sm px-4" id="joinBtn">Join Room</button>
+        </div>
+      </div>
+
+      <div id="hostPane" class="d-none">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label text-dim small mb-1">Room title</label>
+            <input id="titleInput" class="form-control form-control-sm" placeholder="Friday Night Housie" value="Housiy Night">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label text-dim small mb-1">Max players</label>
+            <input id="maxPlayersInput" type="number" class="form-control form-control-sm" value="100" min="1" max="100">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-accent btn-sm w-100" id="hostBtn">Create Room</button>
+          </div>
+        </div>
+        <label class="form-label text-dim small mb-1 mt-2">Prizes</label>
+        <div class="d-flex flex-wrap gap-2">
+          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="FIRST_FIVE" checked><label class="form-check-label small">First Five</label></div>
+          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="TOP_ROW" checked><label class="form-check-label small">Top Row</label></div>
+          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="MIDDLE_ROW" checked><label class="form-check-label small">Middle Row</label></div>
+          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="BOTTOM_ROW" checked><label class="form-check-label small">Bottom Row</label></div>
+          <div class="form-check"><input class="form-check-input prize-check" type="checkbox" value="FULL_HOUSE" checked><label class="form-check-label small">Full House</label></div>
+        </div>
+
+        <hr class="border-secondary my-3">
+
+        <div class="d-flex align-items-center flex-wrap gap-2">
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="autoCallToggle" checked>
+            <label class="form-check-label small" for="autoCallToggle">Auto-call numbers</label>
+          </div>
+          <div class="d-flex align-items-center gap-1 ms-auto" id="autoCallIntervalWrap">
+            <input id="autoCallIntervalInput" type="number" class="form-control form-control-sm auto-call-interval-input" value="5" min="3" max="60" aria-label="Seconds between numbers">
+            <span class="text-dim small">seconds</span>
+          </div>
+        </div>
+        <div class="text-dim small mt-1 d-none" id="autoCallOffHint">Off — you'll tap "Call Next Number" yourself.</div>
+      </div>
+    </div>
+
+    <div class="glass p-3 card-anim landing-history d-none" id="historyCard">
+      <h6 class="text-dim mb-2 small">Your history</h6>
+      <ul class="nav nav-tabs mb-2" style="font-size:13px;">
+        <li class="nav-item"><button class="nav-link active" data-htab="hosted">Hosted Games</button></li>
+        <li class="nav-item"><button class="nav-link" data-htab="joined">Joined Games</button></li>
+      </ul>
+      <div id="hostedList"></div>
+      <div id="joinedList" class="d-none"></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="assets/js/common.js"></script>
+<script src="assets/js/page-index.js?v=20261113-qr-invite" defer></script>
+</body>
+</html>

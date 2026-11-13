@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Super Admin Dashboard — Housiy Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+<link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link href="assets/css/style.css" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/img/ticket-logo.svg">
+<link rel="alternate icon" href="assets/img/favicon.ico">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body>
+
+<nav class="navbar glass px-4 py-2">
+  <span class="brand fs-3"><img src="assets/img/ticket-logo.svg" class="brand-logo" alt="" width="32" height="19"> Housiy Live — Admin</span>
+  <div class="ms-auto d-flex gap-2">
+    <a href="api/admin_export_pdf.php?view=rooms" target="_blank" class="btn btn-sm btn-outline-glass" id="exportPdfBtn">Export PDF</a>
+    <a href="api/admin_export_excel.php?view=rooms" class="btn btn-sm btn-outline-glass" id="exportExcelBtn">Export Excel</a>
+    <button class="btn btn-sm btn-outline-danger" id="logoutBtn">Logout</button>
+  </div>
+</nav>
+
+<div class="container-fluid py-4 px-4">
+
+  <div class="row g-3 mb-4" id="statsRow"></div>
+
+  <div class="glass p-3 card-anim mb-4 d-none" id="roomDetailsPanel">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <h6 class="mb-0" id="roomDetailsTitle">Room details</h6>
+      <div class="d-flex flex-wrap gap-2 ms-auto me-2">
+        <a class="btn btn-sm btn-outline-glass d-none" id="roomDetailsExportPdf" href="#" target="_blank" rel="noopener">Export room PDF</a>
+        <a class="btn btn-sm btn-outline-glass d-none" id="roomDetailsExportExcel" href="#">Export room Excel</a>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-glass" id="roomDetailsClose">Close</button>
+    </div>
+    <div id="roomDetailsBody"><p class="text-dim small mb-0">Loading...</p></div>
+  </div>
+
+
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    <input type="text" id="searchInput" class="form-control" style="max-width:280px;" placeholder="Search by name or email...">
+    <input type="date" id="dateFilter" class="form-control" style="max-width:180px;" title="Filter by created/joined date">
+    <button class="btn btn-sm btn-outline-glass" id="clearFiltersBtn">Clear filters</button>
+  </div>
+
+  <div class="glass p-3 card-anim">
+    <div id="roomsTab">
+      <div class="table-responsive">
+        <table class="table table-dark-glass align-middle">
+          <thead><tr><th>Room</th><th>Title</th><th>Status</th><th>Host</th><th>Players</th><th>Created</th><th>Duration</th><th>Actions</th></tr></thead>
+          <tbody id="roomsBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="hostsTab" class="d-none">
+      <div class="table-responsive">
+        <table class="table table-dark-glass align-middle">
+          <thead><tr><th>Name</th><th>Email</th><th>Rooms Hosted</th><th>Last Hosted</th></tr></thead>
+          <tbody id="hostsBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="playersTab" class="d-none">
+      <div class="table-responsive">
+        <table class="table table-dark-glass align-middle">
+          <thead><tr><th>Name</th><th>Email</th><th>Rooms Joined</th><th>Last Joined</th></tr></thead>
+          <tbody id="playersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div id="emailExportModal" class="d-none" style="position:fixed;inset:0;z-index:3000;background:rgba(20,18,18,.55);display:flex;align-items:center;justify-content:center;padding:16px;">
+  <div class="glass p-4" style="width:min(420px,100%);background:#fff;color:#29231f;border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.25);">
+    <h5 class="mb-2">Export email privacy</h5>
+    <p class="small text-dim mb-3">Choose whether email addresses should be masked in this report.</p>
+    <label class="d-flex align-items-center gap-2 mb-4" for="maskExportEmails">
+      <input type="checkbox" id="maskExportEmails" checked style="width:18px;height:18px;">
+      <span>Mask email addresses (same format players see)</span>
+    </label>
+    <div class="d-flex justify-content-end gap-2">
+      <button type="button" class="btn btn-outline-glass" id="cancelEmailExport">Cancel</button>
+      <button type="button" class="btn btn-primary" id="confirmEmailExport">Export report</button>
+    </div>
+  </div>
+</div>
+\n
+
+<script src="assets/js/common.js?v=admin-export-mask-v9"></script>
+<script src="assets/js/page-admin.js?v=admin-export-mask-v9" defer></script>
+</body>
+</html>

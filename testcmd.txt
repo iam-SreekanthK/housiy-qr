@@ -1,0 +1,47 @@
+
+docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev down -v
+docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev build --no-cache
+docker compose -f deployment/docker/docker-compose.yml --env-file deployment/docker/.env.dev up -d
+
+cloudflared tunnel --url http://localhost:8081
+
+
+
+mkdir -p tests/load/results
+
+k6 run \
+  --out json=tests/load/results/dev-50-rooms-100-players.json \
+  -e BASE_URL=https://brandon-earrings-possibilities-learned.trycloudflare.com/ \
+  -e TARGET_ENV=dev \
+  -e LOAD_ALLOWED_HOSTS=brandon-earrings-possibilities-learned.trycloudflare.com \
+  -e SCENARIO=normal \
+  -e ROOMS=25 \
+  -e PLAYERS_PER_ROOM=100 \
+  -e ITERATIONS=1 \
+  -e MAX_DURATION=2h \
+  tests/load/main.js
+  
+  
+# 10 rooms × 25 players = 250 players
+BASE_URL=http://127.0.0.1:8081 \
+TARGET_ENV=dev \
+SCENARIO=normal \
+k6 run tests/load/main.js
+
+# 10 rooms × 100 players = 1,000 players
+BASE_URL=http://127.0.0.1:8081 \
+TARGET_ENV=dev \
+SCENARIO=players100 \
+k6 run tests/load/main.js
+
+# 25 rooms × 100 players = 2,500 players
+BASE_URL=http://127.0.0.1:8081 \
+TARGET_ENV=dev \
+SCENARIO=stress25x100 \
+k6 run tests/load/main.js
+
+#100 rooms × 100 players
+BASE_URL=http://127.0.0.1:8081 \
+TARGET_ENV=dev \
+SCENARIO=capacity \
+k6 run tests/load/main.js

@@ -1,0 +1,166 @@
+# Optional live-updates stack: Redis + WebSocket gateway + auto-call worker.
+# Rendered like the other manifests (plain ${VAR} substitution). Placeholders:
+#   NAMESPACE, APP_IMAGE, APP_IMAGE_TAG (same as deployment.yaml),
+#   REALTIME_IMAGE   e.g. localhost:8051/housiy-realtime (built from ./realtime)
+#   REALTIME_IMAGE_TAG
+#
+# Apply this BEFORE enabling it on the app, then create the ConfigMap that
+# switches the app on (deleting the ConfigMap switches it back off):
+#   kubectl create configmap housiy-realtime-config -n <ns> \
+#     --from-literal=REDIS_HOST=housiy-redis \
+#     --from-literal=REALTIME_UPSTREAM=housiy-realtime:8090
+#   kubectl rollout restart deployment/housiy-app -n <ns>
+# Optional Redis password (then also set it on this manifest's redis args):
+#   kubectl create secret generic housiy-redis -n <ns> --from-literal=REDIS_PASSWORD=<pw>
+#
+# The app also needs the DB secret housiy-db-credentials (already required).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: housiy-redis
+  namespace: ${NAMESPACE}
+  labels: { app: housiy-redis }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: housiy-redis }
+  template:
+    metadata:
+      labels: { app: housiy-redis }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 999, runAsGroup: 999 }
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # Nothing in Redis is authoritative (MySQL is), so no persistence.
+          # AOF (fsync every second) keeps accepted-but-unflushed ticket marks
+          # across a Redis container restart; MySQL remains the source of truth.
+          args: ["redis-server", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec"]
+          ports: [{ containerPort: 6379 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "250m", memory: "256Mi" }
+      volumes:
+        - { name: data, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-redis
+  namespace: ${NAMESPACE}
+spec:
+  selector: { app: housiy-redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: housiy-realtime
+  namespace: ${NAMESPACE}
+  labels: { app: housiy-realtime }
+spec:
+  replicas: 1   # can be scaled out: every replica subscribes to the same Redis channel
+  selector:
+    matchLabels: { app: housiy-realtime }
+  template:
+    metadata:
+      labels: { app: housiy-realtime }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000 }
+      containers:
+        - name: realtime
+          image: ${REALTIME_IMAGE}:${REALTIME_IMAGE_TAG}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          ports: [{ containerPort: 8090 }]
+          env:
+            - { name: PORT, value: "8090" }
+            - { name: WS_MAX_BUFFERED_BYTES, value: "65536" }
+            - { name: REDIS_HOST, value: "housiy-redis" }
+            - { name: WS_AUTH_URL, value: "http://housiy-app.${NAMESPACE}.svc.cluster.local/api/ws_auth.php" }
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: housiy-redis, key: REDIS_PASSWORD, optional: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 6
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-realtime
+  namespace: ${NAMESPACE}
+spec:
+  selector: { app: housiy-realtime }
+  ports: [{ port: 8090, targetPort: 8090 }]
+---
+# Auto-call worker. Exactly one replica: extra replicas would only add
+# redundant (lock-protected, harmless) work.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: housiy-worker
+  namespace: ${NAMESPACE}
+  labels: { app: housiy-worker }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: housiy-worker }
+  template:
+    metadata:
+      labels: { app: housiy-worker }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 33, runAsGroup: 33 }
+      containers:
+        - name: worker
+          image: ${APP_IMAGE}:${APP_IMAGE_TAG}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          command: ["php", "/var/www/bin/worker.php"]
+          env:
+            - { name: APP_ENV, value: "${APP_ENV}" }
+            - { name: DB_PORT, value: "3306" }
+            - { name: REDIS_HOST, value: "housiy-redis" }
+            - name: DB_HOST
+              valueFrom: { secretKeyRef: { name: housiy-db-credentials, key: DB_HOST } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: housiy-db-credentials, key: DB_NAME } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: housiy-db-credentials, key: DB_USER } }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: housiy-db-credentials, key: DB_PASS } }
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: housiy-redis, key: REDIS_PASSWORD, optional: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "250m", memory: "128Mi" }
+      volumes:
+        - { name: tmp, emptyDir: {} }

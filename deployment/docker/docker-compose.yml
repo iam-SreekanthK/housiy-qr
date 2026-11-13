@@ -1,0 +1,226 @@
+services:
+  # Public HTTP entrypoint. Nginx serves static assets and forwards only
+  # /api/*.php to the private PHP-FPM service.
+  app:
+    image: nginxinc/nginx-unprivileged:1.28-alpine
+    restart: unless-stopped
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8081}:8080"
+    volumes:
+      - ../../src:/var/www/html:ro
+      - ./nginx/app.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    depends_on:
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/index.html"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - housiy_net
+
+  # PHP-FPM is not exposed to the host; only Nginx can reach port 9000.
+  php:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE_REPO:-housiy-app}:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:?Set APP_ENV (dev|uat|prod) in the env file}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-housiy}
+      DB_USER: ${MYSQL_APP_USER:?Set MYSQL_APP_USER in .env}
+      DB_PASS: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PREFIX: ${REDIS_PREFIX:-housiy}
+      # Optional: 0 = per-request Redis connection, 1 = force persistent sockets. Unset = persistent under PHP-FPM.
+      REDIS_PERSISTENT: ${REDIS_PERSISTENT:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      TRUSTED_PROXY_HEADER: ${TRUSTED_PROXY_HEADER:-X-Forwarded-For}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-1}
+      RATE_LIMIT_OVERRIDES: ${RATE_LIMIT_OVERRIDES:-}
+      RATE_LIMIT_HASH_SALT: ${RATE_LIMIT_HASH_SALT:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      PERF_LOG_ENABLED: ${PERF_LOG_ENABLED:-0}
+      PERF_SERVER_TIMING: ${PERF_SERVER_TIMING:-0}
+      PERF_SLOW_MS: ${PERF_SLOW_MS:-200}
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t >/dev/null 2>&1 && kill -0 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - housiy_net
+
+  # Calls auto-call numbers on schedule (previously driven by client polls).
+  # Same image as the app; if this is stopped, polls take over again.
+  worker:
+    image: ${APP_IMAGE_REPO:-housiy-app}:${APP_IMAGE_TAG:-latest}
+    command: ["php", "/var/www/bin/worker.php"]
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:?Set APP_ENV (dev|uat|prod) in the env file}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-housiy}
+      DB_USER: ${MYSQL_APP_USER:?Set MYSQL_APP_USER in .env}
+      DB_PASS: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PREFIX: ${REDIS_PREFIX:-housiy}
+    # Healthy = MySQL reachable, Redis reachable, worker heartbeat present, and
+    # no un-persisted mark older than PERSIST_MAX_LAG_SECONDS (default 30).
+    # `docker compose exec worker php /var/www/bin/status.php --json` shows the metrics.
+    healthcheck:
+      test: ["CMD", "php", "/var/www/bin/status.php", "--check"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - housiy_net
+
+  # WebSocket gateway: relays Redis change signals to browsers. Carries no
+  # game data; authorises each connection through the app's ws_auth.php.
+  # Reached through Nginx (/ws); no public host port is published by default.
+  realtime:
+    build:
+      context: ../../realtime
+    image: ${REALTIME_IMAGE_REPO:-housiy-realtime}:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      PORT: 8090
+      APP_ENV: ${APP_ENV:?Set APP_ENV (dev|uat|prod) in the env file}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # Must equal the app's REDIS_PREFIX: signals are published/subscribed on {prefix}:events.
+      REDIS_PREFIX: ${REDIS_PREFIX:-housiy}
+      WS_AUTH_URL: http://app:8080/api/ws_auth.php
+      WS_AUTH_TIMEOUT_MS: ${WS_AUTH_TIMEOUT_MS:-5000}
+      WS_AUTH_MAX_SOCKETS: ${WS_AUTH_MAX_SOCKETS:-64}
+      WS_MAX_BUFFERED_BYTES: ${WS_MAX_BUFFERED_BYTES:-65536}
+      WS_MAX_PER_ROOM: ${WS_MAX_PER_ROOM:-110}
+      WS_MAX_CONNECTIONS: ${WS_MAX_CONNECTIONS:-12000}
+      WS_COMMAND_TIMEOUT_MS: ${WS_COMMAND_TIMEOUT_MS:-10000}
+      WS_HEARTBEAT_POLL_MS: ${WS_HEARTBEAT_POLL_MS:-10000}
+      # Comma-separated exact origins, e.g. https://housiy.example.com.
+      # Empty = same-host check (Origin host must equal the Host header).
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
+      # 1 = verbose per-connection gateway logs (off by default).
+      WS_DEBUG: ${WS_DEBUG:-0}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - housiy_net
+      
+      
+  # Redis coordinates live signals, caches and buffered marks. AOF with
+  # fsync every second protects accepted-but-not-yet-persisted marks across
+  # a Redis restart; MySQL remains the authoritative durable game store.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AppendOnly + fsync every second: buffered marks that were accepted but
+    # not yet written to MySQL survive a Redis restart (worst case: the last
+    # ~1s on a hard crash). MySQL stays the source of truth either way.
+    # Expand the password inside the container shell, not in Compose's
+    # unquoted command interpolation. This safely handles spaces and shell
+    # metacharacters in generated passwords and omits --requirepass entirely
+    # when REDIS_PASSWORD is empty.
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --save "" --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"; else exec redis-server --save "" --appendonly yes --appendfsync everysec; fi'
+    volumes:
+      - redis_data:/data
+    # Not published on the host. Reachable only inside this project's network.
+    healthcheck:
+      # REDISCLI_AUTH avoids putting the password in the redis-cli argument
+      # list. No AUTH is attempted when the password is intentionally empty.
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping; else redis-cli ping; fi | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    networks:
+      - housiy_net
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-housiy}
+      MYSQL_USER: ${MYSQL_APP_USER:?Set MYSQL_APP_USER in .env}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+    # Bound to 127.0.0.1 only - MySQL has no business being reachable
+    # from outside the host, let alone the public internet. Each environment
+    # uses its own DB_EXPOSED_PORT (3307 dev / 3308 uat / 3309 prod) so they
+    # can run side by side; still always loopback, never the public interface.
+    ports:
+      - "127.0.0.1:${DB_EXPOSED_PORT:-3307}:3306"
+    volumes:
+      - housiy_db_data:/var/lib/mysql
+      - ../../sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - housiy_net
+
+  # Not started by default. phpMyAdmin is a convenience tool for local
+  # dev, not something to leave listening in a normal deployment; run it
+  # only when you explicitly ask for it, and only on localhost:
+  #   docker compose --profile debug up -d phpmyadmin
+  phpmyadmin:
+    image: phpmyadmin:5
+    restart: unless-stopped
+    profiles:
+      - debug
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "127.0.0.1:${PMA_PORT:-8089}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - housiy_net
+
+networks:
+  housiy_net:
+    driver: bridge
+
+volumes:
+  housiy_db_data:
+  redis_data:

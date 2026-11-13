@@ -1,0 +1,6 @@
+{
+  "name": "housiy-e2e",
+  "private": true,
+  "description": "Full-game verification, realtime, race and recovery tests for Housiy (UAT/DEV only)",
+  "dependencies": { "mysql2": "3.11.3", "ws": "8.18.0" }
+}

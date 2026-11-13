@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Play Housiy — Housiy Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+<link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link href="assets/css/style.css" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="assets/img/ticket-logo.svg">
+<link rel="alternate icon" href="assets/img/favicon.ico">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+</head>
+<body class="app-shell player-shell">
+
+<nav class="navbar glass px-4 py-2">
+  <a href="index.html" class="brand fs-4 text-decoration-none"><img src="assets/img/ticket-logo.svg" class="brand-logo" alt="" width="34" height="20"> Housiy Live</a>
+  <span class="ms-auto text-dim small d-none d-sm-inline" id="roomTitleText">—</span>
+  <span class="nav-game-timer d-none" id="gameTimer" title="Time since the game started">00:00</span>
+  <button class="btn-sound ms-3" id="soundToggle" type="button" title="Hear called numbers read aloud"></button>
+</nav>
+
+<div class="app-main">
+  <div id="rematchBanner" class="d-none" aria-live="assertive"></div>
+
+  <div class="player-layout">
+
+    <div class="glass p-2 card-anim area-boardpanel">
+      <div class="board-panel-inner">
+        <div class="board-block">
+          <h6 class="text-dim mb-2 small flex-shrink-0">Number Board</h6>
+          <div id="numberBoard" class="number-board-holder"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="glass p-3 card-anim area-ticket d-flex flex-column">
+      <div class="current-number-bar">
+        <div class="current-number-display" id="currentNumberDisplay">–</div>
+        <div class="current-number-meta">
+          <div class="text-dim small">CURRENT NUMBER</div>
+          <div class="text-dim small"><span id="calledCount">0</span> / 90 called</div>
+          <div class="d-flex align-items-center gap-2 flex-nowrap mt-1 status-meta-row">
+            <div id="roomStatusPill"></div>
+            <span class="pill pill-auto d-none" id="autoCallBadge">🔁 Auto <span id="autoCallSeconds"></span></span>
+            <div class="text-dim small">Players: <span id="playerCount">0</span>/<span id="maxPlayers">100</span></div>
+          </div>
+        </div>
+        <button class="reaction-trigger" type="button" id="reactionTrigger" aria-label="Send emoji reaction" title="Send emoji reaction">😊</button>
+      </div>
+      <div class="mb-2 flex-shrink-0">
+        <h6 class="text-dim mb-2 small">Claim Prize</h6>
+        <div class="claim-row claim-row-sm" id="claimButtons"></div>
+      </div>
+      <p class="text-dim small mb-2 flex-shrink-0 ticket-hint">Listen for your numbers and tap them yourself</p>
+      <div class="ticket-wrap">
+        <div id="ticketContainer"></div>
+      </div>
+    </div>
+
+    <div class="area-social">
+      <div class="glass p-3 card-anim winners-card collapsible-room-card" data-room-card="winners">
+        <div class="room-card-static-head"><span>Winners</span></div>
+        <div class="room-card-content" id="winnersContent"><div id="winnersList"><p class="text-dim small mb-0">No winners yet.</p></div></div>
+      </div>
+      <div class="glass p-3 card-anim players-card collapsible-room-card" data-room-card="players">
+        <div class="room-card-static-head participants-header">
+          <span>Participants (<span id="participantsCount">0</span>)</span>
+          <button type="button" class="room-card-toggle participants-toggle" id="participantsToggle" aria-label="Expand participants" title="Expand participants" aria-expanded="false" hidden><span class="room-card-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span></button>
+        </div>
+        <div class="room-card-content" id="playersContent"><div id="playersList" class="players-list"><p class="text-dim small mb-0">Loading...</p></div></div>
+      </div>
+      <div class="glass p-3 card-anim area-gamedetails d-none collapsible-room-card" id="gameDetailsCard" data-room-card="details">
+        <div class="room-card-static-head"><span>Game Details</span></div>
+        <div class="room-card-content"><div class="game-details-list">
+          <div class="gd-row"><span class="gd-icon gd-icon-start" aria-hidden="true">▶</span><span class="gd-label">Started</span><span class="gd-value" id="gdStartTime">—</span></div>
+          <div class="gd-row"><span class="gd-icon gd-icon-end" aria-hidden="true">■</span><span class="gd-label">Completed</span><span class="gd-value" id="gdEndTime">—</span></div>
+          <div class="gd-row"><span class="gd-icon gd-icon-duration" aria-hidden="true">⏱</span><span class="gd-label">Duration</span><span class="gd-value gd-value-strong" id="gdDuration">—</span></div>
+        </div></div>
+      </div>
+      <section class="reaction-history-card glass collapsible-room-card" id="reactionHistoryCard" data-room-card="reactions" aria-labelledby="reactionHistoryTitle">
+        <div class="reaction-history-head"><button type="button" class="room-card-toggle" id="reactionHistoryToggle" aria-expanded="false"><span id="reactionHistoryTitle">Emoji reaction history</span><span class="reaction-history-count" id="reactionHistoryCount">0</span><span class="room-card-chevron" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m6 9 6 6 6-6"/></svg></span></button></div>
+        <div class="room-card-content" hidden><div class="reaction-history-list" id="reactionHistoryList"><p class="reaction-history-empty">Loading reaction history…</p></div></div>
+      </section>
+    </div>
+
+  </div>
+</div>
+
+
+
+<div class="reaction-modal-backdrop" id="reactionModal" aria-hidden="true">
+  <section class="reaction-modal" role="dialog" aria-modal="true" aria-labelledby="reactionTitle">
+    <div class="reaction-modal-head"><div><h3 id="reactionTitle">Send a reaction</h3><p>Choose an emoji and who should see it.</p></div><button type="button" class="reaction-close" id="reactionClose" aria-label="Close">×</button></div>
+    <div class="reaction-emoji-grid" id="reactionEmojiGrid">
+      <button type="button" data-emoji="🎉">🎉</button><button type="button" data-emoji="❤️">❤️</button><button type="button" data-emoji="😂">😂</button><button type="button" data-emoji="👏">👏</button><button type="button" data-emoji="🔥">🔥</button><button type="button" data-emoji="👍">👍</button><button type="button" data-emoji="😍">😍</button><button type="button" data-emoji="😮">😮</button><button type="button" data-emoji="🥳">🥳</button><button type="button" data-emoji="🙌">🙌</button><button type="button" data-emoji="💯">💯</button><button type="button" data-emoji="😢">😢</button>
+    </div>
+    <div class="reaction-targets"><button type="button" class="active" data-reaction-target="everyone">👥 Everyone</button><button type="button" data-reaction-target="player">👤 Specific player</button></div>
+    <div id="reactionPlayerWrap" class="d-none"><select id="reactionPlayerSelect" aria-label="Select player"><option value="">Choose a player…</option></select></div>
+    <button type="button" class="reaction-send" id="reactionSend">Send reaction</button>
+    <p class="reaction-note">Reactions float briefly on screen without a background card.</p>
+  </section>
+</div>
+<div class="reaction-float-layer" id="reactionFloatLayer" aria-live="polite"></div>
+
+<script src="assets/js/common.js?v=20261105-winner-privacy-emoji-rematch-v1"></script>
+<script src="assets/js/room-card-disclosure.js" defer></script>
+<script src="assets/js/emoji-reactions.js" defer></script>
+<script src="assets/js/page-player.js?v=20261105-winner-privacy-emoji-rematch-v1" defer></script>
+</body>
+</html>

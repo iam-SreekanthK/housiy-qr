@@ -15,6 +15,18 @@
 #
 # The app also needs the DB secret housiy-db-credentials (already required).
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: housiy-redis-data
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,9 +45,8 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          # Nothing in Redis is authoritative (MySQL is), so no persistence.
-          # AOF (fsync every second) keeps accepted-but-unflushed ticket marks
-          # across a Redis container restart; MySQL remains the source of truth.
+          # MySQL remains authoritative; Redis AOF on the PVC protects
+          # accepted-but-not-yet-persisted marks across pod replacement.
           args: ["redis-server", "--save", "", "--appendonly", "yes", "--appendfsync", "everysec"]
           ports: [{ containerPort: 6379 }]
           securityContext:
@@ -51,7 +62,9 @@ spec:
             requests: { cpu: "50m", memory: "64Mi" }
             limits: { cpu: "250m", memory: "256Mi" }
       volumes:
-        - { name: data, emptyDir: {} }
+        - name: data
+          persistentVolumeClaim:
+            claimName: housiy-redis-data
 ---
 apiVersion: v1
 kind: Service

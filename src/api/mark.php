@@ -76,12 +76,17 @@ $gameId = (int)$gameId;
 $roomStatusStmt = EndpointProfiler::query(
     $db(),
     'mark.room_status_guard',
-    'SELECT r.status AS room_status, g.status AS game_status FROM rooms r JOIN games g ON g.room_id = r.id WHERE r.id = ? AND g.id = ? LIMIT 1',
-    [$roomId, $gameId]
+    'SELECT r.status AS room_status, g.status AS game_status,
+            EXISTS(SELECT 1 FROM room_players rp WHERE rp.room_id = r.id AND rp.user_id = ? AND rp.is_active = 1) AS active_member
+     FROM rooms r JOIN games g ON g.room_id = r.id WHERE r.id = ? AND g.id = ? LIMIT 1',
+    [$user['id'], $roomId, $gameId]
 );
 $roomStatusRow = $roomStatusStmt->fetch();
 $roomStatus = strtoupper((string)($roomStatusRow['room_status'] ?? ''));
 $gameStatus = strtoupper((string)($roomStatusRow['game_status'] ?? ''));
+if (empty($roomStatusRow['active_member'])) {
+    json_error('You have been removed from this room. Please return to the home page.', 403);
+}
 if (!in_array($roomStatus, ['LIVE', 'PAUSED'], true) || !in_array($gameStatus, ['RUNNING', 'PAUSED'], true)) {
     json_error('Ticket marking is closed because this game has completed.', 409);
 }

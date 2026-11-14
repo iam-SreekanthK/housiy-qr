@@ -37,9 +37,9 @@ if (!$room) {
 if ($room['status'] !== 'LOBBY') {
     // Allow rejoin (reconnect) if already a player in this room, even
     // after the game has started; otherwise block new joins.
-    $existingStmt = $pdo->prepare('SELECT id FROM room_players WHERE room_id = ? AND user_id = ?');
+    $existingStmt = $pdo->prepare('SELECT id, is_active FROM room_players WHERE room_id = ? AND user_id = ?');
     $existingStmt->execute([$room['id'], $user['id']]);
-    if (!$existingStmt->fetch()) {
+    if (!$existingStmt->fetch() && (int)$room['host_user_id'] !== (int)$user['id']) {
         json_error('This game has already started or ended. New joins are closed.', 409);
     }
 }
@@ -58,16 +58,21 @@ try {
 
     // Re-check room status while holding the lock so a join cannot slip in
     // after the host has started the game.
-    $existingStmt = $pdo->prepare('SELECT id FROM room_players WHERE room_id = ? AND user_id = ?');
+    $existingStmt = $pdo->prepare('SELECT id, is_active FROM room_players WHERE room_id = ? AND user_id = ?');
     $existingStmt->execute([(int)$lockedRoom['id'], (int)$user['id']]);
-    $alreadyJoined = (bool)$existingStmt->fetch();
+    $existingMembership = $existingStmt->fetch(PDO::FETCH_ASSOC);
+    $alreadyJoined = (bool)$existingMembership;
+    // A room owner entering through the public Join Room form is still the
+    // host. Never downgrade the owner to a player just because they used the
+    // room-code entry point. Admin blocks are enforced earlier by Auth::identify.
+    $isHost = (int)$lockedRoom['host_user_id'] === (int)$user['id'];
 
-    if ($lockedRoom['status'] !== 'LOBBY' && !$alreadyJoined) {
+    if ($lockedRoom['status'] !== 'LOBBY' && !$alreadyJoined && !$isHost) {
         $pdo->rollBack();
         json_error('This game has already started or ended. New joins are closed.', 409);
     }
 
-    if (!$alreadyJoined) {
+    if (!$alreadyJoined && !$isHost) {
         $countStmt = $pdo->prepare('SELECT COUNT(*) FROM room_players WHERE room_id = ? AND is_active = 1');
         $countStmt->execute([(int)$lockedRoom['id']]);
         $current = (int)$countStmt->fetchColumn();
@@ -79,7 +84,24 @@ try {
 
         $ins = $pdo->prepare('INSERT INTO room_players (room_id, user_id) VALUES (?, ?)');
         $ins->execute([(int)$lockedRoom['id'], (int)$user['id']]);
+    } elseif ($isHost && !$alreadyJoined) {
+        // Defensive repair for older rooms whose host membership/ticket was
+        // missing. Host access does not consume a second player slot.
+        $pdo->prepare('INSERT INTO room_players (room_id, user_id, is_active) VALUES (?, ?, 1)')
+            ->execute([(int)$lockedRoom['id'], (int)$user['id']]);
+    } elseif ($alreadyJoined && (int)($existingMembership['is_active'] ?? 0) !== 1) {
+        // A previously blocked/deactivated participant keeps the same ticket
+        // and game history. Reactivate that membership without inserting a
+        // duplicate row, including when the room is already LIVE/COMPLETED.
+        $pdo->prepare('UPDATE room_players SET is_active = 1 WHERE id = ? AND room_id = ? AND user_id = ?')
+            ->execute([(int)$existingMembership['id'], (int)$lockedRoom['id'], (int)$user['id']]);
     }
+
+    // Keep lifetime role history independent of room membership lifecycle.
+    $roleHistory = $pdo->prepare($isHost
+        ? 'UPDATE users SET ever_hosted = 1 WHERE id = ?'
+        : 'UPDATE users SET ever_played = 1 WHERE id = ?');
+    $roleHistory->execute([(int)$user['id']]);
 
     // Ensure a ticket exists for this player in this room.
     $ticketStmt = $pdo->prepare('SELECT * FROM tickets WHERE room_id = ? AND user_id = ?');
@@ -97,7 +119,14 @@ try {
         $ticket = ['id' => (int)$pdo->lastInsertId(), 'ticket_grid' => $ticketJson];
     }
 
-    GameEngine::log($pdo, (int)$lockedRoom['id'], null, 'PLAYER', (int)$user['id'], 'PLAYER_JOINED');
+    GameEngine::log(
+        $pdo,
+        (int)$lockedRoom['id'],
+        null,
+        $isHost ? 'HOST' : 'PLAYER',
+        (int)$user['id'],
+        $isHost ? 'HOST_REJOINED' : 'PLAYER_JOINED'
+    );
     $pdo->commit();
     // Use the fresh locked room snapshot for the response and realtime event.
     $room = $lockedRoom;
@@ -107,7 +136,8 @@ try {
     json_error('Failed to join room.', 500);
 }
 
-RedisCache::del('rx:pl:' . (int)$room['id']); // the reactions player picker must list the newcomer
+RedisCache::del('rx:pl:' . (int)$room['id']);
+RedisCache::del('mem:' . (int)$room['id'] . ':' . (int)$user['id']); // the reactions player picker must list the newcomer
 Realtime::room((string)$room['room_code'], 'player_joined', null, ['user_id' => (int)$user['id'], 'player_name' => (string)$user['name']]);
 
 json_ok([
@@ -123,4 +153,6 @@ json_ok([
         'grid' => json_decode($ticket['ticket_grid'], true),
     ],
     'user' => ['id' => $user['id'], 'name' => $user['name'], 'email' => $user['email']],
+    'role' => $isHost ? 'HOST' : 'PLAYER',
+    'is_host' => $isHost,
 ]);

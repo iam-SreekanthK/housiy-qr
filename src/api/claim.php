@@ -30,6 +30,7 @@ $pdo = DB::conn();
 $claimRoomSpan = EndpointProfiler::start('claim.room_lookup');
 $room = RoomAccess::findByCode($pdo, $roomCode);
 EndpointProfiler::stop($claimRoomSpan);
+RoomAccess::requireMember($pdo, $room, $user);
 
 $prizesEnabled = json_decode((string)($room['prizes_enabled'] ?? '[]'), true);
 $prizesEnabled = is_array($prizesEnabled) ? $prizesEnabled : [];

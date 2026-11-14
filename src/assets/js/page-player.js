@@ -206,8 +206,12 @@ function updateGameTimer(res, isFirstLook) {
 async function loadTicket() {
   const res = await apiGet('ticket.php', { room_code: roomCode });
   if (!res.success) {
-    if (res.error && (res.error.includes('joined') || res.error.includes('authenticat'))) {
-      window.location.href = 'index.html';
+    if (res.error && /deleted by the administrator/i.test(res.error)) {
+      window.location.replace('index.html?notice=admin_room_deleted');
+    } else if (res.error && /room not found|does not exist|deleted|invalid room/i.test(res.error)) {
+      window.location.replace('index.html?notice=room_deleted');
+    } else if (res.error && /joined|authenticat|blocked|access to this room/i.test(res.error)) {
+      window.location.replace('index.html?notice=player_blocked&rejoin=' + encodeURIComponent(roomCode));
     }
     return;
   }
@@ -374,7 +378,16 @@ async function markCell(number) {
 
 async function poll() {
   const res = await apiGet('ticket.php', { room_code: roomCode });
-  if (!res.success) return;
+  if (!res.success) {
+    if (res.error && /deleted by the administrator/i.test(res.error)) {
+      window.location.replace('index.html?notice=admin_room_deleted');
+    } else if (res.error && /room not found|does not exist|deleted|invalid room/i.test(res.error)) {
+      window.location.replace('index.html?notice=room_deleted');
+    } else if (res.error && /authenticat|blocked|joined|access to this room/i.test(res.error)) {
+      window.location.replace('index.html?notice=player_blocked&rejoin=' + encodeURIComponent(roomCode));
+    }
+    return;
+  }
   rtAfterResponse(res);
   renderAll(res);
 
@@ -412,8 +425,8 @@ window.addEventListener('housiy:realtime', (event) => {
   }
   if (type === 'hello' && initialRoomExtrasLoaded) {
     void fetchRoomExtras(); // reconnect: refresh lifecycle/roster snapshot once
-  } else if (['room_state_sync','player_joined','player_left','game_started','game_paused','game_resumed','game_ended','prize_won'].includes(type)) {
-    void fetchRoomExtras({ fresh: type === 'room_state_sync' || type === 'prize_won' });
+  } else if (['room_state_sync','player_joined','player_left','player_removed','game_started','game_paused','game_resumed','game_ended','prize_won'].includes(type)) {
+    void fetchRoomExtras({ fresh: type === 'room_state_sync' || type === 'prize_won' || type === 'player_removed' });
   }
   if (type === 'number_called' && Number.isInteger(Number(data.number))) {
     syncAutoCallUi({auto_call_enabled:playerAutoCallEnabled,status:playerRoomStatus,auto_call_interval_seconds:playerAutoCallIntervalSeconds,auto_call_seconds_remaining:playerAutoCallIntervalSeconds}, true);

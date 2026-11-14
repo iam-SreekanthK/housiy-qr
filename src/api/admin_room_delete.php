@@ -7,6 +7,7 @@ require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
 require_once __DIR__ . '/../includes/GameEngine.php';
 require_once __DIR__ . '/../includes/RedisCache.php';
+require_once __DIR__ . '/../includes/Realtime.php';
 
 require_post();
 
@@ -19,7 +20,7 @@ if ($roomCode === '') {
 }
 
 $pdo = DB::conn();
-$room = RoomAccess::findByCode($pdo, $roomCode);
+$room = RoomAccess::findByCode($pdo, $roomCode, true);
 
 if (!$room) {
     json_error('Room not found', 404);
@@ -41,12 +42,13 @@ try {
         ['room_code' => $normalizedRoomCode]
     );
 
-    // Related database rows are expected to cascade through foreign keys.
-    $del = $pdo->prepare('DELETE FROM rooms WHERE id = ?');
+    // Soft-delete instead of cascading DELETE: retain host, player, winner,
+    // ticket, call and reaction rows so admin history and exports remain auditable.
+    $del = $pdo->prepare("UPDATE rooms SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP), is_archived = 1, status = 'CANCELLED' WHERE id = ? AND deleted_at IS NULL");
     $del->execute([$roomId]);
 
     if ($del->rowCount() !== 1) {
-        throw new RuntimeException('Room deletion did not affect exactly one row');
+        throw new RuntimeException('Room was already deleted or could not be marked deleted');
     }
 
     $pdo->commit();
@@ -60,6 +62,7 @@ try {
 
 // External cleanup occurs after the database transaction commits.
 RedisCache::del('rc:' . $normalizedRoomCode);
-Realtime::room($normalizedRoomCode, 'room_deleted');
+RedisCache::set('rd:' . $normalizedRoomCode, 'admin', 86400);
+Realtime::room($normalizedRoomCode, 'room_deleted', null, ['reason' => 'admin']);
 
 json_ok(['deleted' => true]);

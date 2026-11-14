@@ -2,7 +2,8 @@
 -- Online Housiy Platform - Database Schema (MySQL 8)
 -- Single consolidated schema file. Run this once against a
 -- fresh database. There are no separate migration files to
--- apply — everything the app needs lives here.
+-- apply — everything the app needs, including lifetime admin role
+-- counters and blocked-player report timestamps, lives here.
 -- =========================================================
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -20,6 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
     uuid            CHAR(36) NOT NULL UNIQUE,
     name            VARCHAR(120) NOT NULL,
     email           VARCHAR(190) NOT NULL,
+    ever_hosted     TINYINT(1) NOT NULL DEFAULT 0,
+    ever_played     TINYINT(1) NOT NULL DEFAULT 0,
     session_token   CHAR(64) NOT NULL,
     last_seen_at    DATETIME NULL,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +62,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     rematch_room_code CHAR(8) NULL DEFAULT NULL, -- set once the host starts a rematch from this room
     parent_room_id  BIGINT UNSIGNED NULL DEFAULT NULL, -- points back to the room this one was rematched from
     is_archived     TINYINT(1) NOT NULL DEFAULT 0,
+    deleted_at      DATETIME NULL DEFAULT NULL, -- soft-delete; preserve room/user/report history
     started_at      DATETIME NULL,
     ended_at        DATETIME NULL,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -66,6 +70,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     CONSTRAINT fk_rooms_host FOREIGN KEY (host_user_id) REFERENCES users(id) ON DELETE RESTRICT,
     CONSTRAINT fk_rooms_parent FOREIGN KEY (parent_room_id) REFERENCES rooms(id) ON DELETE SET NULL,
     KEY idx_rooms_status (status),
+    KEY idx_rooms_deleted_created (deleted_at, created_at),
     KEY idx_rooms_host (host_user_id)
 ) ENGINE=InnoDB;
 
@@ -86,6 +91,7 @@ CREATE TABLE IF NOT EXISTS room_players (
     user_id         BIGINT UNSIGNED NOT NULL,
     joined_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active       TINYINT(1) NOT NULL DEFAULT 1,
+    blocked_at      DATETIME NULL DEFAULT NULL,
     UNIQUE KEY uq_room_user (room_id, user_id),
     KEY idx_room_players_active_joined (room_id, is_active, joined_at, user_id),
     CONSTRAINT fk_rp_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
@@ -334,3 +340,22 @@ CREATE TABLE IF NOT EXISTS user_blocks (
     CONSTRAINT fk_user_blocks_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_user_blocks_admin FOREIGN KEY (blocked_by) REFERENCES admin_users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Immutable audit trail: unlike user_blocks (current access state), this table
+-- retains every block/unblock action even after a user is unblocked or deleted.
+CREATE TABLE IF NOT EXISTS user_block_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    name_snapshot VARCHAR(120) NOT NULL,
+    email_snapshot VARCHAR(190) NOT NULL,
+    event_type ENUM('BLOCK','UNBLOCK') NOT NULL,
+    reason VARCHAR(500) NULL,
+    admin_id BIGINT UNSIGNED NULL,
+    event_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_user_block_events_user_time (user_id, event_at),
+    KEY idx_user_block_events_email_time (email_snapshot, event_at),
+    KEY idx_user_block_events_name_time (name_snapshot, event_at),
+    CONSTRAINT fk_ube_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ube_admin FOREIGN KEY (admin_id) REFERENCES admin_users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

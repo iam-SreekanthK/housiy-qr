@@ -32,6 +32,7 @@ if (!isset($state['room'], $state['game']) || !is_array($state['room']) || !is_a
 }
 $room = $state['room'];
 $game = $state['game'];
+RoomState::requireMember($db, $room, $user);
 
 $ticket = RoomState::ticket($db, (int)$room['id'], (int)$user['id']);
 if (!$ticket) {

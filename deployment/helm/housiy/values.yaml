@@ -1,0 +1,39 @@
+replicaCount: 2
+image:
+  registry: nexus.example.com
+  repository: housiy/housiy-app
+  tag: latest
+  pullPolicy: IfNotPresent
+realtime:
+  replicas: 1
+  image:
+    registry: nexus.example.com
+    repository: housiy/housiy-realtime
+    tag: latest
+    pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+database:
+  host: mysql.example.internal
+  port: 3306
+  name: housiy
+  user: housiy
+  password: CHANGE_ME
+redis:
+  password: ""
+  storage: 2Gi
+resources:
+  app:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  realtime:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+imagePullSecrets: []
+ingress:
+  enabled: false
+  className: nginx
+  host: housiy.example.com
+  tlsSecret: housiy-tls

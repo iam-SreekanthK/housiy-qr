@@ -1,0 +1,109 @@
+stages: [validate, test, quality, build, push, deploy]
+
+variables:
+  APP_IMAGE: "$CI_REGISTRY_IMAGE/housiy-app"
+  REALTIME_IMAGE: "$CI_REGISTRY_IMAGE/housiy-realtime"
+  DOCKER_TLS_CERTDIR: "/certs"
+  PHP_VERSION: "8.3"
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+php-tests:
+  stage: test
+  image: composer:2
+  script:
+    - composer validate --no-check-publish
+    - composer install --no-interaction --prefer-dist
+    - vendor/bin/phpunit
+  artifacts:
+    when: always
+    paths: [tests-results/]
+    expire_in: 7 days
+
+frontend-tests:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd tests/frontend
+    - npm ci
+    - npm test
+
+realtime-tests:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd realtime
+    - npm ci
+    - npm test
+
+sonarqube:
+  stage: quality
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - sonar-scanner -Dsonar.host.url="$SONAR_HOST_URL" -Dsonar.token="$SONAR_TOKEN" -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
+  rules:
+    - if: '$SONAR_HOST_URL && $SONAR_TOKEN'
+
+docker-build:
+  stage: build
+  image: docker:27-cli
+  services: [docker:27-dind]
+  before_script:
+    - docker info
+  script:
+    - docker build -t "$APP_IMAGE:$CI_COMMIT_SHA" .
+    - docker build -t "$REALTIME_IMAGE:$CI_COMMIT_SHA" ./realtime
+    - docker save "$APP_IMAGE:$CI_COMMIT_SHA" "$REALTIME_IMAGE:$CI_COMMIT_SHA" -o images.tar
+  artifacts:
+    paths: [images.tar]
+    expire_in: 1 day
+
+push-nexus:
+  stage: push
+  image: docker:27-cli
+  services: [docker:27-dind]
+  needs: [docker-build, php-tests, frontend-tests, realtime-tests]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "stg" || $CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - docker load -i images.tar
+    - echo "$NEXUS_PASSWORD" | docker login "$NEXUS_REGISTRY" -u "$NEXUS_USER" --password-stdin
+    - docker tag "$APP_IMAGE:$CI_COMMIT_SHA" "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-app:$CI_COMMIT_SHA"
+    - docker tag "$REALTIME_IMAGE:$CI_COMMIT_SHA" "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-realtime:$CI_COMMIT_SHA"
+    - docker push "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-app:$CI_COMMIT_SHA"
+    - docker push "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-realtime:$CI_COMMIT_SHA"
+
+deploy-kubernetes:
+  stage: deploy
+  image: alpine/helm:3.15.4
+  needs: [push-nexus]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "stg" || $CI_COMMIT_BRANCH == "main"'
+      when: manual
+  before_script:
+    - apk add --no-cache kubectl
+    - mkdir -p "$HOME/.kube"
+    - echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+    - chmod 600 "$HOME/.kube/config"
+  script:
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then NS=housiy-production; else NS=housiy-staging; fi
+      kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+      kubectl create secret docker-registry nexus-pull -n "$NS" \
+        --docker-server="$NEXUS_REGISTRY" --docker-username="$NEXUS_USER" --docker-password="$NEXUS_PASSWORD" \
+        --dry-run=client -o yaml | kubectl apply -f -
+      helm upgrade --install housiy deployment/helm/housiy -n "$NS" --create-namespace \
+        --set image.registry="$NEXUS_REGISTRY" --set image.tag="$CI_COMMIT_SHA" \
+        --set realtime.image.registry="$NEXUS_REGISTRY" --set realtime.image.tag="$CI_COMMIT_SHA" \
+        --set database.host="$DB_HOST" --set database.name="$DB_NAME" \
+        --set database.user="$DB_USER" --set database.password="$DB_PASS" \
+        --set redis.password="$REDIS_PASSWORD" --set imagePullSecrets[0].name=nexus-pull --wait --timeout 10m
+      kubectl rollout status deployment/housiy-app -n "$NS" --timeout=5m

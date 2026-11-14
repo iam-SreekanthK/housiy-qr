@@ -28,23 +28,22 @@ The regular Compose stack intentionally has no `test-runner`, no test-only Nginx
 - `tests/unit/`, `tests/api/`, `tests/e2e/`, `tests/frontend/`, `tests/ui/`, `tests/ops/` — targeted tests and correctness checks.
 - `deployment/docker/` — Compose definition, Nginx/PHP-FPM configuration, environment template and environment controller.
 - `deployment/k8s/` — Kubernetes manifests/templates.
-- `performance-data/` — baseline, pre-test and collected run-specific diagnostic snapshots/reports; see `LoadTest.md` for interpretation and timestamp alignment.
 
 ## 4. Prerequisites
 
 - Docker Engine and Docker Compose v2.
-- Docker Engine and Docker Compose v2. Environment-specific DEV/UAT/PROD starter files are included for this handoff. They contain `CHANGE_ME` placeholders for all secrets; generate unique credentials before running `envctl.sh validate` or starting any stack.
+- Docker Engine and Docker Compose v2. Only `deployment/docker/.env.example` is shipped. Copy it to a private `.env.dev`, `.env.uat`, or `.env.prod` file and generate unique secrets before starting a stack.
 - For host-side load testing: k6 installed on the host. The app's real containers must already be running and healthy.
 - For standalone test suites: PHP 8.1+ with PDO MySQL and Redis extension, Node.js 18+, npm, and the relevant test dependencies.
 
-The handoff ZIP includes `.env.dev`, `.env.uat` and `.env.prod` as environment-specific starter files, but all secret values are redacted to unique `CHANGE_ME` placeholders. Generate independent high-entropy credentials for each environment and store them in a secret manager or protected deployment file; do not commit them or place real secrets in a release ZIP. `.gitignore` excludes all three. For local HTTP, DEV uses `COOKIE_SECURE=0`; set it to 1 when the browser-facing DEV URL is HTTPS. Use separate database names, Redis prefixes, ports and credentials for each environment. Do not load-test production.
+The release contains only `.env.example`; no environment-specific credentials are included. Copy the example separately for each environment, set `APP_ENV`, ports, database name, Redis prefix and independently generated credentials, then keep each file outside source control. For local HTTP, DEV uses `COOKIE_SECURE=0`; set it to 1 when the browser-facing DEV URL is HTTPS. Do not load-test production.
 
 ## 5. Start and operate DEV
 
 From the repository root:
 
 ```bash
-# The included environment file is a starter template with CHANGE_ME secrets.
+# Create a private DEV environment file from the safe template.
 # Edit it first; envctl validate intentionally rejects unfilled placeholders.
 # For a fresh copy only (do not overwrite an existing file):
 cp deployment/docker/.env.example deployment/docker/.env.dev
@@ -145,15 +144,17 @@ Under PHP-FPM, `RedisConn` keeps one persistent Redis socket per worker (instead
 
 The Compose PROD file is a deployment starter, not a certification that a particular host/domain is production-ready. Before enabling real users:
 
-1. Replace every `CHANGE_ME` value in `deployment/docker/.env.prod` with independently generated secrets. Example generation (run separately for each key; never reuse a value):
+1. Create the private PROD environment file and set `APP_ENV=prod`, unique ports/database/Redis prefix, and independently generated secrets. Example generation (run separately for each key; never reuse a value):
    ```bash
+   cp deployment/docker/.env.example deployment/docker/.env.prod
+   # Edit APP_ENV=prod and the environment-specific values before deployment.
    openssl rand -hex 32  # MYSQL_ROOT_PASSWORD
    openssl rand -hex 32  # MYSQL_APP_PASSWORD
    openssl rand -hex 32  # REDIS_PASSWORD
    openssl rand -hex 32  # RATE_LIMIT_HASH_SALT
    ```
 2. Store the resulting file outside source control with owner-only permissions (`chmod 600 deployment/docker/.env.prod`) or inject secrets from your secret manager. Do not paste real values into tickets, chat, logs or ZIP files.
-3. Set `WS_ALLOWED_ORIGINS` to the exact browser origin(s), and set `TRUSTED_PROXIES` only to the actual reverse-proxy/ingress addresses or narrow CIDRs. Keep `APP_BIND=127.0.0.1` when a host reverse proxy or tunnel is the public entrypoint.
+3. Set `WS_ALLOWED_ORIGINS` to the exact browser origin(s), and set `TRUSTED_PROXIES` only to the actual reverse-proxy/ingress addresses or narrow CIDRs. Keep `APP_BIND=127.0.0.1` when a host reverse proxy or load balancer is the public entrypoint.
 4. Terminate TLS at a managed load balancer/reverse proxy, enforce HTTPS/HSTS there, and verify secure session cookies end-to-end. The Compose Nginx service is an HTTP application entrypoint; it does not provision a public certificate.
 5. Configure automated encrypted MySQL backups and perform a restore drill. Redis AOF is a recovery aid for buffered work, not a replacement for MySQL backups. Monitor backup age, restore success, disk capacity and Redis persistence health.
 6. Set host/container CPU and memory capacity from measured load; configure log retention, metrics/alerts, firewall rules, patching and an incident/rollback plan. Keep DB/Redis/WebSocket gateway ports private.
@@ -174,7 +175,6 @@ This file is the single application/operations reference. `LoadTest.md` is the s
 The `aws/` directory intentionally contains only two operator scripts:
 
 - `aws/install-docker-compose-run.sh .env.dev` installs Docker Engine and the Compose v2 plugin on Ubuntu/Debian when missing, validates the selected environment file, and starts the complete application stack. It also accepts `.env.uat` or `.env.prod`. Put the selected file at `deployment/docker/.env.<env>` or pass a file path; an external file is copied only if the destination does not already exist. For production, the script enforces `RATE_LIMIT_ENABLED=1` and requires Redis password, rate-limit hash salt, and secure cookies.
-- `aws/cloudflare-tunnel.sh .env.dev` installs `cloudflared` when missing, checks that the selected app port is responding, starts a temporary Cloudflare Quick Tunnel, and prints the public `https://*.trycloudflare.com` URL once. Keep the script running while the tunnel is needed; Ctrl+C stops it. Quick Tunnel URLs are temporary and are not a replacement for a named Cloudflare Tunnel/domain in a long-lived production deployment.
 
 Recommended non-conflicting host ports when environments share one host:
 
@@ -184,7 +184,7 @@ Recommended non-conflicting host ports when environments share one host:
 | UAT | `8082` | `3308` |
 | PROD | `80` | `3309` |
 
-Only Nginx publishes the application port. PHP-FPM (`9000`), realtime (`8090`), Redis (`6379`) and MySQL's container port (`3306`) remain private to the Compose network; the optional phpMyAdmin port (`8089`) binds to loopback and is available only under the `debug` profile. Never expose the database port publicly. Cloudflare should target the selected local application port.
+Only Nginx publishes the application port. PHP-FPM (`9000`), realtime (`8090`), Redis (`6379`) and MySQL's container port (`3306`) remain private to the Compose network; the optional phpMyAdmin port (`8089`) binds to loopback and is available only under the `debug` profile. Never expose the database port publicly. The configured reverse proxy or load balancer should target the selected local application port.
 
 ## Realtime troubleshooting (WebSocket failures)
 
@@ -197,7 +197,7 @@ docker compose --env-file .env.dev ps
 docker compose --env-file .env.dev logs --tail=150 realtime app
 ```
 
-Check that `realtime` reports `redis ready, subscribed to housiy:events`, that `/ws` is routed through the Nginx `app.conf`, and that the gateway's `WS_AUTH_URL` points to `http://app:8080/api/ws_auth.php`. A 401 indicates session/room membership authorization, 403 indicates an Origin mismatch, 429 indicates WebSocket rate limiting, and 503 usually means Redis/gateway availability or the per-room socket limit. Do not expose port 8090 directly; access it through Nginx and the existing tunnel.
+Check that `realtime` reports `redis ready, subscribed to housiy:events`, that `/ws` is routed through the Nginx `app.conf`, and that the gateway's `WS_AUTH_URL` points to `http://app:8080/api/ws_auth.php`. A 401 indicates session/room membership authorization, 403 indicates an Origin mismatch, 429 indicates WebSocket rate limiting, and 503 usually means Redis/gateway availability or the per-room socket limit. Do not expose port 8090 directly; access it through Nginx and the configured reverse proxy or load balancer.
 
 
 ## 10. WebSocket + Redis event-driven operation (current implementation)
@@ -341,7 +341,7 @@ The source includes existing API, UI, E2E, race and k6 suites. The updated brows
 
 - `Dockerfile` — PECL Redis source-tarball install to avoid the previously observed PECL channel release lookup failure.
 - `README.md`, `LoadTest.md` — architecture, key strategy, polling report, deployment and test documentation.
-- `deployment/docker/docker-compose.yml`, `deployment/docker/.env.example`, `.env.dev`, `.env.uat`, `.env.prod` — gateway limits, command timeout and process/FD settings.
+- `deployment/docker/docker-compose.yml`, `deployment/docker/.env.example`, `.env.example` — safe template for gateway limits, command timeout and process/FD settings. Create private per-environment files locally.
 - `realtime/server.js`, `realtime/test/client.test.js` — event envelope, authenticated command bridge, presence, deduplication/metrics and contract tests.
 - `src/includes/Realtime.php`, `src/includes/MarkBuffer.php`, `src/includes/GameEngine.php` — event IDs/payloads and atomic Redis mark validation.
 - `src/api/ws_auth.php`, `mark.php`, `claim.php`, `room_join.php` — room identity, marking, claim and join event payloads.
@@ -382,3 +382,63 @@ The source includes existing API, UI, E2E, race and k6 suites. The updated brows
 ### Fresh database schema
 
 The `room_rematch_declines` table is included in `sql/schema.sql` for fresh installations; no separate rematch migration is needed. Import the complete `sql/schema.sql` into a newly created database.
+
+
+## 13. CI/CD, SonarQube, Nexus, Kubernetes and AWS
+
+The deployment and CI/CD handoff is documented under `docs/`:
+
+- `docs/ci-cd/README.md` — GitHub Actions, GitLab CI, Jenkins, SonarQube, Nexus and separate build/test, push and deploy operations.
+- `docs/deployment/kubernetes-helm-aws-eks.md` — Helm and Kubernetes deployment, AWS EKS preparation, verification and rollback.
+- `.github/workflows/` — independent GitHub Actions workflows.
+- `.gitlab-ci.yml` — GitLab pipeline with manual push/deploy gates.
+- `Jenkinsfile` — existing Jenkins multibranch pipeline, including SonarQube and Quality Gate stages.
+- `deployment/sonarqube/docker-compose.yml` — standalone SonarQube + PostgreSQL stack with persistent volumes.
+- `deployment/helm/housiy/` — Helm chart for the PHP/Nginx app, realtime gateway, Redis and worker.
+
+### CI/CD quick start
+
+1. Run the build/test workflow only. It must not publish images or deploy.
+2. Run build/test/push and publish both `housiy-app` and `housiy-realtime` using the same immutable tag.
+3. Verify both image tags in Nexus.
+4. Deploy that exact tag using Helm to staging.
+5. Run smoke and Housiy lifecycle tests, then approve production deployment.
+
+Never put SonarQube, Nexus, database, Redis, kubeconfig or AWS credentials in source control. Use the CI platform's secret store. See the docs above for required variables and credentials.
+
+### Repository deployment layout
+
+```text
+.github/workflows/
+  01-build-test.yml
+  02-build-test-push-nexus.yml
+  03-deploy-helm.yml
+.gitlab-ci.yml
+Jenkinsfile
+sonar-project.properties
+deployment/
+  sonarqube/docker-compose.yml
+  docker/                       # Existing Docker Compose runtime
+  helm/housiy/                  # Helm chart
+  k8s/                          # Existing plain Kubernetes manifests
+  aws/                          # Existing AWS/Ubuntu deployment helpers
+docs/
+  ci-cd/README.md
+  deployment/kubernetes-helm-aws-eks.md
+```
+
+The new CI/CD and deployment files are additive. They do not replace the existing Compose or plain Kubernetes deployment path. Validate the chart and CI configuration in a non-production environment before first use; actual Nexus, SonarQube, database, ingress, IAM and cluster settings are environment-specific.
+
+### Admin lifetime counts and blocked-player report history
+
+**Fresh installation: no separate SQL migration is required or included.** Create an empty database and import the complete `sql/schema.sql` once. It already defines `users.ever_hosted`, `users.ever_played`, and `room_players.blocked_at`. Admin Total Users / Players / Hosts use lifetime role markers and remain stable after room deletion or user blocking. Room PDF/Excel reports include all room members; a player blocked by an administrator is shown as `Name (Blocked: YYYY-MM-DD HH:MM:SS IST)`.
+
+
+### Admin room deletion and audit history
+
+Room deletion is a soft delete (`rooms.deleted_at`): deleted rooms are hidden from normal room discovery and runtime access, while host/player memberships, winners, called numbers, reactions, and timestamps remain available to Super Admin room reports and exports. The consolidated fresh-install `sql/schema.sql` includes this column; no separate migration is needed for a fresh database.
+
+
+### Admin block/unblock audit history
+
+Fresh installs create `user_block_events` from `sql/schema.sql`. Every actual BLOCK and UNBLOCK transition is appended with the user identity snapshot, administrator, reason, and timestamp. The current access state remains in `user_blocks`; audit rows are never deleted when a user is unblocked. The admin user-history panel shows the full event timeline, while Hosts/Players/Users tables and exports show current status, latest event, and event count. Room reports show current membership status separately from the retained first `blocked_at` timestamp. Existing historical block/unblock events cannot be reconstructed retroactively; only transitions recorded after this schema/code is deployed are available.

@@ -1,0 +1,53 @@
+name: Housiy - Build and Test
+on:
+  push:
+    branches: [dev, stg, main]
+  pull_request:
+    branches: [dev, stg, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mysqli, mbstring, redis, apcu
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            realtime/package-lock.json
+            tests/frontend/package-lock.json
+      - name: PHP validation and tests
+        run: |
+          composer validate --no-check-publish
+          composer install --no-interaction --prefer-dist
+          vendor/bin/phpunit
+      - name: Frontend contract tests
+        working-directory: tests/frontend
+        run: |
+          npm ci
+          npm test
+      - name: Realtime gateway tests
+        working-directory: realtime
+        run: |
+          npm ci
+          npm test
+      - name: Validate Docker builds
+        run: |
+          docker build -t housiy-app:ci .
+          docker build -t housiy-realtime:ci ./realtime
+      - name: SonarQube analysis
+        if: ${{ vars.SONAR_HOST_URL != '' }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        with:
+          args: -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

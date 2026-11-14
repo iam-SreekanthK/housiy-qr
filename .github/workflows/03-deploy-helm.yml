@@ -1,0 +1,83 @@
+name: Housiy - Deploy Published Images
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Kubernetes namespace/environment
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: Exact previously published image tag
+        required: true
+        type: string
+      aws_eks:
+        description: Connect to AWS EKS (otherwise use supplied kubeconfig)
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Configure AWS credentials
+        if: ${{ inputs.aws_eks }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Connect to EKS
+        if: ${{ inputs.aws_eks }}
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+      - name: Configure supplied kubeconfig
+        if: ${{ !inputs.aws_eks }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+      - name: Login to Nexus registry
+        env:
+          REGISTRY: ${{ vars.NEXUS_REGISTRY }}
+          USER: ${{ secrets.NEXUS_USER }}
+          PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+        run: |
+          kubectl create namespace housiy-${{ inputs.environment }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry nexus-pull \
+            --docker-server="$REGISTRY" --docker-username="$USER" --docker-password="$PASSWORD" \
+            -n housiy-${{ inputs.environment }} --dry-run=client -o yaml | kubectl apply -f -
+      - name: Helm deploy
+        env:
+          REGISTRY: ${{ vars.NEXUS_REGISTRY }}
+          NAMESPACE: housiy-${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASS: ${{ secrets.DB_PASS }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+        run: |
+          helm upgrade --install housiy deployment/helm/housiy \
+            --namespace "$NAMESPACE" --create-namespace \
+            --set image.registry="$REGISTRY" \
+            --set image.tag="$IMAGE_TAG" \
+            --set realtime.image.registry="$REGISTRY" \
+            --set realtime.image.tag="$IMAGE_TAG" \
+            --set database.host="$DB_HOST" \
+            --set database.name="$DB_NAME" \
+            --set database.user="$DB_USER" \
+            --set database.password="$DB_PASS" \
+            --set redis.password="$REDIS_PASSWORD" \
+            --set imagePullSecrets[0].name=nexus-pull \
+            --wait --timeout 10m
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/housiy-app -n housiy-${{ inputs.environment }} --timeout=5m
+          kubectl get pods,svc -n housiy-${{ inputs.environment }}

@@ -46,6 +46,10 @@ final class Auth
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || mb_strlen($email) > 190) {
             throw new InvalidArgumentException('Please enter a valid email address.');
         }
+        $emailLocalPart = strstr($email, '@', true);
+        if ($emailLocalPart === false || mb_strlen($emailLocalPart) < 4) {
+            throw new InvalidArgumentException('Email is too short. Please use at least 4 characters before @.');
+        }
 
         $pdo = DB::conn();
 
@@ -60,11 +64,11 @@ final class Auth
         // Enforce the super-admin block list before creating a user or refreshing a session.
         $blocked = $pdo->prepare(
             'SELECT id FROM user_blocks
-             WHERE (email_normalized IS NOT NULL AND email_normalized = ?)
-                OR (name_normalized IS NOT NULL AND name_normalized = ?)
+             WHERE (user_id IS NOT NULL AND user_id = (SELECT id FROM users WHERE LOWER(TRIM(email)) = ? LIMIT 1))
+                OR (email_normalized IS NOT NULL AND email_normalized = ?)
              LIMIT 1'
         );
-        $blocked->execute([$email, mb_strtolower($name, 'UTF-8')]);
+        $blocked->execute([$email, $email]);
         if ($blocked->fetch()) {
             throw new InvalidArgumentException('This account is blocked. Please contact the Housiy administrator.');
         }

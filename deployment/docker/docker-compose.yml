@@ -1,3 +1,5 @@
+name: housiy
+
 services:
   # Public HTTP entrypoint. Nginx serves static assets and forwards only
   # /api/*.php to the private PHP-FPM service.

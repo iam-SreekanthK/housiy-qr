@@ -4,31 +4,50 @@
 let historyLoaded = false;
 let historyLoadPromise = null;
 
+const landingParams = new URLSearchParams(window.location.search);
+const landingNotice = landingParams.get('notice');
+const rejoinRoomCode = String(landingParams.get('rejoin') || '').trim().toUpperCase();
+if (/^[A-Z0-9]{3,32}$/.test(rejoinRoomCode)) document.getElementById('roomCodeInput').value = rejoinRoomCode;
+const suppressHistoryForNotice = ['player_blocked', 'room_deleted', 'admin_room_deleted'].includes(landingNotice);
+if (landingNotice === 'player_blocked') showToast('Your account has been blocked by the administrator. You have been removed from the room.', 'danger');
+else if (landingNotice === 'admin_room_deleted') showToast('This room has been deleted by the administrator.', 'warning');
+else if (landingNotice === 'room_deleted') showToast('This room is no longer available.', 'warning');
+
 const identity = getStoredIdentity();
 if (identity) {
   document.getElementById('nameInput').value = identity.name;
   document.getElementById('emailInput').value = identity.email;
 }
 
-try {
-  if (localStorage.getItem('housiy_authenticated') === '1') {
-    loadHistory().then(result => {
-      if (!result?.success && !/authenticat|session|log.?in|unauthori[sz]ed/i.test(String(result?.error || ''))) {
-        console.warn('[Housiy] Game history could not be loaded:', result?.error || 'unknown error');
-      }
-    }).catch(error => console.warn('[Housiy] Game history could not be loaded:', error));
-  }
-} catch (_) { /* storage disabled: keep history hidden and avoid an auth guess */ }
+// localStorage is only a hint, never proof of authentication. Verify the
+// HttpOnly server identity cookie and current block-list state before calling
+// history.php. Blocked users and expired sessions therefore never trigger a
+// history request from the landing page.
+async function verifyLandingAccessAndLoadHistory() {
+  if (suppressHistoryForNotice) return;
+  let marker = false;
+  try { marker = localStorage.getItem('housiy_authenticated') === '1'; } catch (_) {}
+  if (!marker) return; // first-time visitors make no auth/history request
 
-// A landing page can be restored from the back/forward cache without running
-// its scripts again. Re-check the explicit authenticated marker on restore.
+  const status = await apiGetFresh('auth_status.php');
+  if (!status || !status.success || status.authenticated !== true || status.blocked === true) {
+    try { localStorage.removeItem('housiy_authenticated'); } catch (_) {}
+    document.getElementById('historyCard')?.classList.add('d-none');
+    return;
+  }
+  const result = await loadHistory();
+  if (!result?.success && /authenticat|session|log.?in|unauthori[sz]ed/i.test(String(result?.error || ''))) {
+    try { localStorage.removeItem('housiy_authenticated'); } catch (_) {}
+  }
+  if (!result?.success) console.warn('[Housiy] Game history could not be loaded:', result?.error || 'unknown error');
+}
+
+verifyLandingAccessAndLoadHistory().catch(error => console.warn('[Housiy] Landing authentication check failed:', error));
+
+// Re-check after a bfcache restore; stale tabs must not request history unless
+// the server still recognises the session and the account is not blocked.
 window.addEventListener('pageshow', (event) => {
-  if (!event.persisted) return;
-  try {
-    if (localStorage.getItem('housiy_authenticated') === '1') {
-      loadHistory().catch(error => console.warn('[Housiy] Game history could not be loaded:', error));
-    }
-  } catch (_) { /* storage disabled: do not infer authentication */ }
+  if (event.persisted) verifyLandingAccessAndLoadHistory().catch(error => console.warn('[Housiy] Landing authentication check failed:', error));
 });
 
 document.querySelectorAll('#modeTabs .nav-link').forEach(btn => {
@@ -58,13 +77,17 @@ function getIdentityInputs() {
     errEl.textContent = 'Please enter both your name and email.';
     return null;
   }
+  const emailLocalPart = email.split('@', 1)[0];
+  if (email.includes('@') && emailLocalPart.length < 4) {
+    errEl.textContent = 'Email is too short. Please use at least 4 characters before @.';
+    return null;
+  }
   errEl.textContent = '';
   return { name, email };
 }
 
-/** Joins `roomCode` as `ident` and, on success, opens the player page.
- *  Shared by the Join button and the QR-invite auto-join. Returns true when
- *  the join succeeded (the page is then navigating away). */
+/** Joins `roomCode` as `ident` and routes the room owner to the host console.
+ *  Other users enter the player page. Shared by manual and QR joins. */
 async function joinRoomAndEnter(ident, roomCode) {
   const btn = document.getElementById('joinBtn');
   btn.disabled = true; btn.textContent = 'Joining...';
@@ -76,7 +99,10 @@ async function joinRoomAndEnter(ident, roomCode) {
   // marker only gates the landing-page history request; cached identity alone
   // must never trigger an unauthenticated history call.
   try { localStorage.setItem('housiy_authenticated', '1'); } catch (_) {}
-  window.location.href = `player.html?room=${res.room.room_code}`;
+  const destination = res.is_host || String(res.role || '').toUpperCase() === 'HOST'
+    ? 'host.html'
+    : 'player.html';
+  window.location.href = `${destination}?room=${encodeURIComponent(res.room.room_code)}`;
   return true;
 }
 

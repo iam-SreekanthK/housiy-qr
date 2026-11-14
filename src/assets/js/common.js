@@ -250,10 +250,27 @@ const winnerAnnounceQueue = [];
 let winnerAnnounceRunning = false;
 window.housiyWinnerAnnouncementActive = false;
 
+const winnerAnnouncementDrainCallbacks = [];
+function afterWinnerAnnouncements(callback) {
+  if (typeof callback !== 'function') return;
+  if (!winnerAnnounceRunning && winnerAnnounceQueue.length === 0) {
+    callback();
+    return;
+  }
+  winnerAnnouncementDrainCallbacks.push(callback);
+}
+function notifyWinnerAnnouncementsDrained() {
+  if (winnerAnnounceRunning || winnerAnnounceQueue.length > 0) return;
+  window.housiyWinnerAnnouncementActive = false;
+  const callbacks = winnerAnnouncementDrainCallbacks.splice(0);
+  callbacks.forEach(callback => {
+    try { callback(); } catch (error) { console.error('[Housiy] final winner callback failed:', error); }
+  });
+}
 function runNextWinnerAnnouncement() {
   if (winnerAnnounceRunning) return;
   const item = winnerAnnounceQueue.shift();
-  if (!item) { window.housiyWinnerAnnouncementActive = false; return; }
+  if (!item) { notifyWinnerAnnouncementsDrained(); return; }
   winnerAnnounceRunning = true;
   window.housiyWinnerAnnouncementActive = true;
 
@@ -533,17 +550,26 @@ function showFinalWinnersOnce(winners, gameKey = 'current', onClose) {
   const key = String(gameKey || 'current');
   if (!Array.isArray(winners) || winners.length === 0 || finalWinnersSummaryShown.has(key)) return false;
   finalWinnersSummaryShown.add(key);
+
+  // Make sure every Full House winner has had their individual announcement.
+  // Prize events normally enqueue these first, but this also covers a game_ended
+  // event/snapshot that reaches the browser before the final prize_won event.
   const fullHouseWinners = winners.filter(w => String(w.prize_type || '').toUpperCase() === 'FULL_HOUSE');
-  // With several Full House winners the one that ends the game is the last.
-  const fullHouse = fullHouseWinners[fullHouseWinners.length - 1];
-  if (fullHouse) {
-    // Full House celebration order: winner banner + balloons/voice first,
-    // then the complete winners card after the banner has finished.
-    announceRoomWinnerOnce(fullHouse.winner_name, 'FULL_HOUSE', fullHouse.winner_email || null, fullHouse.winner_position || 1, fullHouseWinners.length);
-    setTimeout(() => showFinalWinnersBanner(winners, onClose), 4600);
-  } else {
+  fullHouseWinners.forEach(w => {
+    announceRoomWinnerOnce(
+      w.winner_name,
+      'FULL_HOUSE',
+      w.winner_email || null,
+      w.winner_position || 1,
+      fullHouseWinners.length
+    );
+  });
+
+  // Do not display the final card on a fixed delay. Wait until the last
+  // individual winner banner has completed and its exit animation has closed.
+  afterWinnerAnnouncements(() => {
     showFinalWinnersBanner(winners, onClose);
-  }
+  });
   return true;
 }
 function scheduleFinalWinnersBanner(winners, delayMs = 0, onClose) {
@@ -1371,6 +1397,33 @@ function startRealtime(roomCode, pollFn) {
         console.error('[Housiy realtime] ignored cross-room event', { expected: roomCode, received: m.room_code });
         return;
       }
+      // Administrative lifecycle events must be handled before snapshot
+      // recovery buffering: the blocked user's HTTP session is revoked in the
+      // same transaction, so waiting for a successful snapshot would strand
+      // the kick event in the recovery queue.
+      if (m.event === 'PLAYER_BLOCKED') {
+        try { if (window.housiyStopRealtimeRoom) window.housiyStopRealtimeRoom('blocked by administrator'); } catch (_) {}
+        window.location.replace('index.html?notice=player_blocked&rejoin=' + encodeURIComponent(roomCode));
+        return;
+      }
+      if (m.event === 'ROOM_DELETED') {
+        try { if (window.housiyStopRealtimeRoom) window.housiyStopRealtimeRoom('room deleted'); } catch (_) {}
+        const notice = m.data?.reason === 'admin' ? 'admin_room_deleted' : 'room_deleted';
+        window.location.replace('index.html?notice=' + notice);
+        return;
+      }
+      if (m.event === 'PLAYER_REMOVED') {
+        // Roster count and participant list are derived from active members.
+        // Advance the sequence baseline and reconcile on every room page.
+        const removedSequence = Number(m.sequence || 0);
+        if (removedSequence > 0) rtLastRoomVersion = Math.max(rtLastRoomVersion || 0, removedSequence);
+        if (m.event_id && ws && ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({event:'ACK_EVENT', command_id:`ack-${String(m.event_id).slice(0,64)}`, room_code:roomCode, data:{event_id:String(m.event_id), sequence:removedSequence}})); } catch (_) {}
+        }
+        refresh();
+        rtAnnounce('player_removed', m.data || null);
+        return;
+      }
       // Buffer room traffic received between HELLO and successful snapshot
       // reconciliation. Buffer before event-id dedupe so replay can process it.
       if (recoveryInProgress && recoverySocket === socket && !(m.t === 'hello' || m.event === 'HELLO')) {
@@ -1423,18 +1476,17 @@ function startRealtime(roomCode, pollFn) {
           }
         })();
       } else if (m.event) {
-        if (m.event === 'ROOM_DELETED') { window.location.replace('index.html'); return; }
         // A completed game is still a room participant, but it is no longer a
         // live-game subscriber. Keep only room/rematch lifecycle traffic on the
         // existing socket. ROOM_STATE_SYNC is the gateway envelope for
         // rematch_created; GAME_STARTED transitions the accepted rematch back
         // into the normal live event stream. Do not ACK or dispatch stale game
         // events (numbers, marks, reactions, etc.) while waiting for rematch.
-        const terminalAllowedEvents = new Set(['ROOM_STATE_SYNC', 'GAME_STARTED', 'GAME_FINISHED', 'WINNER_DECLARED', 'PRIZE_CLAIMED']);
+        const terminalAllowedEvents = new Set(['ROOM_STATE_SYNC', 'GAME_STARTED', 'GAME_FINISHED', 'WINNER_DECLARED', 'PRIZE_CLAIMED', 'PLAYER_REMOVED']);
         const reactionGraceActive = Number(window.housiyReactionGraceUntil || 0) > Date.now();
         if (window.housiyGameTerminal && !terminalAllowedEvents.has(m.event) && !(m.event === 'EMOJI_REACTION' && reactionGraceActive)) return;
         if (m.event_id && ws && ws.readyState === WebSocket.OPEN) { try { ws.send(JSON.stringify({event:'ACK_EVENT', command_id:`ack-${String(m.event_id).slice(0,64)}`, room_code:roomCode, data:{event_id:String(m.event_id), sequence:Number(m.sequence || 0)}})); } catch (_) {} }
-        const legacyType = ({NUMBER_CALLED:'number_called', NUMBER_MARKED:'ticket_marked', WINNER_DECLARED:'prize_won', PRIZE_CLAIMED:'prize_won', GAME_STARTED:'game_started', GAME_PAUSED:'game_paused', GAME_RESUMED:'game_resumed', GAME_FINISHED:'game_ended', PLAYER_JOINED:'player_joined', EMOJI_REACTION:'reaction'}[m.event] || m.event.toLowerCase());
+        const legacyType = ({NUMBER_CALLED:'number_called', NUMBER_MARKED:'ticket_marked', WINNER_DECLARED:'prize_won', PRIZE_CLAIMED:'prize_won', GAME_STARTED:'game_started', GAME_PAUSED:'game_paused', GAME_RESUMED:'game_resumed', GAME_FINISHED:'game_ended', PLAYER_JOINED:'player_joined', PLAYER_REMOVED:'player_removed', EMOJI_REACTION:'reaction'}[m.event] || m.event.toLowerCase());
         if (m.event === 'GAME_FINISHED') { window.housiyGameTerminal = true; window.housiyReactionGraceUntil = Date.now() + 10000; rtAutoCall = null; }
         if (m.event === 'GAME_STARTED') { window.housiyGameTerminal = false; resetRoomWinnerAnnouncements(); }
         if (m.event === 'ROOM_STATE_SYNC') refresh();
@@ -1456,7 +1508,7 @@ function startRealtime(roomCode, pollFn) {
         // gaps/out-of-order delivery, or lifecycle/roster changes that need
         // fields not carried by the event envelope. Number calls and marks do
         // not generate ticket.php/results.php requests.
-        if (['GAME_STARTED','GAME_PAUSED','GAME_RESUMED','GAME_FINISHED','PLAYER_JOINED'].includes(m.event)) refresh();
+        if (['GAME_STARTED','GAME_PAUSED','GAME_RESUMED','GAME_FINISHED','PLAYER_JOINED','PLAYER_REMOVED'].includes(m.event)) refresh();
       } else if (m.t === 'u') {
         // Compact legacy signals carry no rematch lifecycle semantics. Ignore
         // them while terminal; ROOM_STATE_SYNC uses the modern event envelope.

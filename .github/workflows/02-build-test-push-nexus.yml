@@ -1,0 +1,71 @@
+name: Housiy - Build Test and Push to Nexus
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable image tag (for example v1.2.3 or commit SHA)
+        required: true
+        type: string
+      run_sonar:
+        description: Run SonarQube quality analysis
+        required: true
+        default: true
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mysqli, mbstring, redis, apcu
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            realtime/package-lock.json
+            tests/frontend/package-lock.json
+      - name: PHP tests
+        run: |
+          composer validate --no-check-publish
+          composer install --no-interaction --prefer-dist
+          vendor/bin/phpunit
+      - name: Frontend tests
+        working-directory: tests/frontend
+        run: npm ci && npm test
+      - name: Realtime tests
+        working-directory: realtime
+        run: npm ci && npm test
+      - name: SonarQube analysis
+        if: ${{ inputs.run_sonar }}
+        uses: SonarSource/sonarqube-scan-action@v5
+        with:
+          args: -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300
+        env:
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Validate image tag
+        run: |
+          [[ "${{ inputs.image_tag }}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+      - name: Build images
+        run: |
+          docker build -t "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-app:${{ inputs.image_tag }}" .
+          docker build -t "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-realtime:${{ inputs.image_tag }}" ./realtime
+        env:
+          NEXUS_REGISTRY: ${{ vars.NEXUS_REGISTRY }}
+          NEXUS_NAMESPACE: ${{ vars.NEXUS_NAMESPACE }}
+      - name: Login and push images
+        env:
+          NEXUS_REGISTRY: ${{ vars.NEXUS_REGISTRY }}
+          NEXUS_NAMESPACE: ${{ vars.NEXUS_NAMESPACE }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "$NEXUS_PASSWORD" | docker login "$NEXUS_REGISTRY" -u "$NEXUS_USER" --password-stdin
+          docker push "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-app:$IMAGE_TAG"
+          docker push "$NEXUS_REGISTRY/$NEXUS_NAMESPACE/housiy-realtime:$IMAGE_TAG"

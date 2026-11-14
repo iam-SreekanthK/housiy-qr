@@ -30,7 +30,7 @@ const checks = [
   [/Realtime::room\(\(string\)\$room\['room_code'\], 'prize_won', null, \$claimEvent\)/.test(read('src/api/claim.php')), 'server publishes one canonical winner event to every room participant'],
   [(read('src/api/claim.php').match(/Realtime::room\(\(string\)\$room\['room_code'\], 'prize_(?:claimed|won)'/g) || []).length === 1, 'server emits exactly one prize event per successful claim (prevents duplicate voice)'],
   [/previousCurrentNumber = n;[\s\S]*?if \(isNewCalledNumber\) speakNumber\(n\)/.test(host), 'host WebSocket number event updates snapshot baseline and speaks each number only once'],
-  [/const fullHouseWinners = winners\.filter[\s\S]*?setTimeout\(\(\) => showFinalWinnersBanner\(winners, onClose\), 4600\)/.test(common), 'Full House winner banner and celebration finish before final winners card opens'],
+  [/const fullHouseWinners = winners\.filter[\s\S]*?fullHouseWinners\.forEach[\s\S]*?afterWinnerAnnouncements\(\(\) => \{[\s\S]*?showFinalWinnersBanner\(winners, onClose\)/.test(common), 'final Full House winners card waits until every individual winner announcement has drained'],
   [/unlockUtterance\.onend = \(\) =>[\s\S]*?pendingSpeech\.shift\(\)/.test(common), 'Chrome queued speech drains after speech engine unlock completes'],
   [/function maskWinnerEmail\(email\)/.test(common) && /maskWinnerEmail\(w\.winner_email\)/.test(common), 'final winners card masks winner email addresses'],
   [/escapeHtml\(w\.winner_email\)/.test(host) && /escapeHtml\(w\.winner_email\)/.test(player), 'host and player prize winners lists mask winner email addresses'],

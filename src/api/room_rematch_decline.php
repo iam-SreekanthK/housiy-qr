@@ -19,7 +19,7 @@ if (!$room || !in_array((string)$room['status'], ['COMPLETED', 'CANCELLED'], tru
 if (!hash_equals((string)($room['rematch_room_code'] ?? ''), $newRoomCode)) {
     json_error('This rematch does not belong to the original room.', 409);
 }
-$member = $pdo->prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ? LIMIT 1');
+$member = $pdo->prepare('SELECT 1 FROM room_players WHERE room_id = ? AND user_id = ? AND is_active = 1 LIMIT 1');
 $member->execute([(int)$room['id'], (int)$user['id']]);
 if (!$member->fetchColumn()) json_error('You are not a member of this room.', 403);
 $stmt = $pdo->prepare('INSERT INTO room_rematch_declines (room_id, user_id, rematch_room_code) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE declined_at = VALUES(declined_at)');

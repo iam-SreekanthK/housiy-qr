@@ -35,16 +35,25 @@ $hosted = $hostedStmt->fetchAll();
 // Rooms this user joined as a player, excluding rooms they hosted themselves.
 $joinedStmt = $pdo->prepare(
     'SELECT r.room_code, r.title, r.status, r.created_at AS room_created_at,
-            rp.joined_at,
+            rp.joined_at, rp.blocked_at, rp.is_active,
             u2.name AS host_name, u2.email AS host_email
      FROM room_players rp
      JOIN rooms r ON r.id = rp.room_id
      JOIN users u2 ON u2.id = r.host_user_id
-     WHERE rp.user_id = ? AND rp.is_active = 1 AND r.host_user_id <> ?
+     WHERE rp.user_id = ? AND r.host_user_id <> ?
      ORDER BY rp.joined_at DESC'
 );
 $joinedStmt->execute([$user['id'], $user['id']]);
 $joined = $joinedStmt->fetchAll();
+
+$blockEventsStmt = $pdo->prepare(
+    'SELECT event_type, reason, event_at, name_snapshot, email_snapshot
+     FROM user_block_events
+     WHERE user_id = ?
+     ORDER BY event_at DESC, id DESC LIMIT 200'
+);
+$blockEventsStmt->execute([(int)$user['id']]);
+$blockEvents = $blockEventsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 json_ok([
     'user' => [
@@ -53,4 +62,5 @@ json_ok([
     ],
     'hosted' => $hosted,
     'joined' => $joined,
+    'block_events' => $blockEvents,
 ]);

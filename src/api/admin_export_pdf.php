@@ -6,6 +6,7 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
+require_once __DIR__ . '/../includes/PublicEmailMask.php';
 
 $admin = AdminAuth::requireAdmin();
 RateLimiter::enforce('expensive', 'admin:' . $admin['id']);
@@ -16,6 +17,8 @@ function mask_report_email($email): string {
     global $maskEmails;
     $email = trim((string)($email ?? ''));
     if (!$maskEmails || $email === '') return $email;
+    $existingAt = strrpos($email, '@');
+    if ($existingAt !== false && (str_contains(substr($email, 0, $existingAt), '*') || str_contains(substr($email, 0, $existingAt), '..'))) return $email;
     $at = strrpos($email, '@');
     if ($at === false || $at === 0 || $at === strlen($email) - 1) return '***';
     $local = substr($email, 0, $at); $domain = substr($email, $at + 1); $length = strlen($local);
@@ -23,6 +26,26 @@ function mask_report_email($email): string {
     elseif ($length <= 4) $masked = substr($local, 0, 1) . str_repeat('*', max(1, $length - 1));
     else $masked = substr($local, 0, 2) . '..' . substr($local, -2);
     return $masked . '@' . $domain;
+}
+
+
+function mask_report_rows_intelligently(array $rows): array {
+    global $maskEmails;
+    if (!$maskEmails || !$rows) return $rows;
+    $nameKey = null; $emailKey = null;
+    foreach (['name','host_name','player_name','winner_name'] as $candidate) {
+        if (array_key_exists($candidate, $rows[0])) { $nameKey = $candidate; break; }
+    }
+    foreach (['email','host_email','player_email','winner_email'] as $candidate) {
+        if (array_key_exists($candidate, $rows[0])) { $emailKey = $candidate; break; }
+    }
+    if ($nameKey === null || $emailKey === null) return $rows;
+    $people = [];
+    foreach ($rows as $row) $people[] = ['name' => (string)($row[$nameKey] ?? ''), 'email' => (string)($row[$emailKey] ?? '')];
+    [$people] = mask_room_public_people($people, []);
+    foreach ($rows as $i => &$row) $row[$emailKey] = $people[$i]['email'] ?? $row[$emailKey];
+    unset($row);
+    return $rows;
 }
 
 function h($value): string { return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
@@ -50,35 +73,53 @@ $status = strtoupper((string)($_GET['status'] ?? ''));
 $roomCode = trim((string)($_GET['room_code'] ?? ''));
 if ($roomCode === '' && in_array($view, ['rooms','hosts','players','users'], true)) {
     if ($view === 'rooms') {
-        $sql='SELECT r.room_code,r.title,r.status,u.name host_name,u.email host_email,(SELECT COUNT(*) FROM room_players rp WHERE rp.room_id=r.id AND rp.is_active=1) player_count,r.created_at FROM rooms r JOIN users u ON u.id=r.host_user_id';
-        if (in_array($status,['LOBBY','LIVE','PAUSED','COMPLETED'],true)) $sql .= $status==='LIVE' ? " WHERE r.status IN ('LIVE','PAUSED')" : ' WHERE r.status=' . $pdo->quote($status);
+        $sql="SELECT r.room_code,r.title,CASE WHEN r.deleted_at IS NOT NULL THEN 'DELETED' ELSE r.status END AS status,
+                     u.name host_name,u.email host_email,
+                     (SELECT COUNT(*) FROM room_players rp WHERE rp.room_id=r.id AND rp.is_active=1) player_count,
+                     r.created_at,r.deleted_at
+              FROM rooms r JOIN users u ON u.id=r.host_user_id";
+        if (in_array($status,['LOBBY','LIVE','PAUSED','COMPLETED'],true)) $sql .= $status==='LIVE' ? " WHERE r.deleted_at IS NULL AND r.status IN ('LIVE','PAUSED')" : ' WHERE r.deleted_at IS NULL AND r.status=' . $pdo->quote($status);
         $sql.=' ORDER BY r.created_at DESC'; $rows=$pdo->query($sql)->fetchAll();
-        $headers=['Room','Title','Status','Host','Host Email','Players','Created']; $keys=['room_code','title','status','host_name','host_email','player_count','created_at'];
+        $headers=['Room','Title','Status','Host','Host Email','Active Players','Created','Deleted At']; $keys=['room_code','title','status','host_name','host_email','player_count','created_at','deleted_at'];
     } elseif ($view==='hosts') {
-        $rows=$pdo->query('SELECT u.name,u.email,COUNT(r.id) rooms_hosted,MAX(r.created_at) last_hosted_at FROM users u JOIN rooms r ON r.host_user_id=u.id GROUP BY u.id,u.name,u.email ORDER BY rooms_hosted DESC')->fetchAll(); $headers=['Name','Email','Rooms Hosted','Last Hosted']; $keys=['name','email','rooms_hosted','last_hosted_at'];
+        $rows=$pdo->query("SELECT u.name,u.email,COUNT(r.id) rooms_hosted,MAX(r.created_at) last_hosted_at,
+            (SELECT MAX(ub.updated_at) FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) blocked_at,
+            CASE WHEN EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) THEN 'Blocked' ELSE 'Active' END current_status,
+            (SELECT CONCAT(ube.event_type,' ',DATE_FORMAT(ube.event_at,'%Y-%m-%d %H:%i:%s')) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email) ORDER BY ube.event_at DESC,ube.id DESC LIMIT 1) last_block_event,
+            (SELECT COUNT(*) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email)) block_event_count
+            FROM users u LEFT JOIN rooms r ON r.host_user_id=u.id WHERE u.ever_hosted=1
+            GROUP BY u.id,u.name,u.email ORDER BY rooms_hosted DESC")->fetchAll();
+        $headers=['Name','Email','Rooms Hosted','Last Hosted','Current Status','Last Block Event','Block Events']; $keys=['name','email','rooms_hosted','last_hosted_at','current_status','last_block_event','block_event_count'];
     } elseif ($view==='players') {
-        $rows=$pdo->query('SELECT u.name,u.email,COUNT(rp.id) rooms_joined,MAX(rp.joined_at) last_joined_at FROM users u JOIN room_players rp ON rp.user_id=u.id WHERE NOT EXISTS (SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id) GROUP BY u.id,u.name,u.email ORDER BY rooms_joined DESC')->fetchAll(); $headers=['Name','Email','Rooms Joined','Last Joined']; $keys=['name','email','rooms_joined','last_joined_at'];
+        $rows=$pdo->query("SELECT u.name,u.email,
+            (SELECT COUNT(*) FROM room_players rp2 JOIN rooms r2 ON r2.id=rp2.room_id WHERE rp2.user_id=u.id AND r2.host_user_id<>u.id) rooms_joined,
+            (SELECT MAX(rp2.joined_at) FROM room_players rp2 JOIN rooms r2 ON r2.id=rp2.room_id WHERE rp2.user_id=u.id AND r2.host_user_id<>u.id) last_joined_at,
+            (SELECT MAX(ub.updated_at) FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) blocked_at,
+            CASE WHEN EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) THEN 'Blocked' ELSE 'Active' END current_status,
+            (SELECT CONCAT(ube.event_type,' ',DATE_FORMAT(ube.event_at,'%Y-%m-%d %H:%i:%s')) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email) ORDER BY ube.event_at DESC,ube.id DESC LIMIT 1) last_block_event,
+            (SELECT COUNT(*) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email)) block_event_count
+            FROM users u WHERE u.ever_played=1 ORDER BY rooms_joined DESC")->fetchAll();
+        $headers=['Name','Email','Rooms Joined','Last Joined','Current Status','Last Block Event','Block Events']; $keys=['name','email','rooms_joined','last_joined_at','current_status','last_block_event','block_event_count'];
     } else {
-        $rows=$pdo->query("SELECT u.name,u.email,u.created_at,CASE WHEN EXISTS(SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id) THEN 'Host' WHEN EXISTS(SELECT 1 FROM room_players rp WHERE rp.user_id=u.id) THEN 'Player' ELSE 'Player' END user_type FROM users u WHERE EXISTS(SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id) OR EXISTS(SELECT 1 FROM room_players rp WHERE rp.user_id=u.id) ORDER BY u.created_at DESC")->fetchAll(); $headers=['Name','Email','User Type','Created']; $keys=['name','email','user_type','created_at'];
+        $rows=$pdo->query("SELECT u.name,u.email,u.created_at,
+            CASE WHEN u.ever_hosted=1 AND u.ever_played=1 THEN 'Host + Player' WHEN u.ever_hosted=1 THEN 'Host' ELSE 'Player' END user_type,
+            (SELECT MAX(ub.updated_at) FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) blocked_at,
+            CASE WHEN EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.user_id=u.id OR ub.email_normalized=LOWER(TRIM(u.email))) THEN 'Blocked' ELSE 'Active' END current_status,
+            (SELECT CONCAT(ube.event_type,' ',DATE_FORMAT(ube.event_at,'%Y-%m-%d %H:%i:%s')) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email) ORDER BY ube.event_at DESC,ube.id DESC LIMIT 1) last_block_event,
+            (SELECT COUNT(*) FROM user_block_events ube WHERE ube.user_id=u.id OR LOWER(ube.email_snapshot)=LOWER(u.email)) block_event_count
+            FROM users u WHERE u.ever_hosted=1 OR u.ever_played=1 ORDER BY u.created_at DESC")->fetchAll();
+        $headers=['Name','Email','User Type','Created','Current Status','Last Block Event','Block Events']; $keys=['name','email','user_type','created_at','current_status','last_block_event','block_event_count'];
     }
+    $rows = mask_report_rows_intelligently($rows);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!doctype html><html><head><meta charset="utf-8"><title>Housiy '.h(ucfirst($view)).' Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#171717}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #bbb;padding:7px;text-align:left}th{background:#222;color:white}tr:nth-child(even){background:#f5f5f5}@media print{.no-print{display:none}}</style></head><body><button class="no-print" data-print>Print / Save as PDF</button><script src="/assets/js/print-report.js"></script><h1>Housiy — '.h($view === 'users' ? 'Total Users (Hosts + Players)' : ucfirst($view)).' Report</h1><p>Generated '.h((new DateTimeImmutable("now",new DateTimeZone("Asia/Kolkata")))->format("Y-m-d H:i:s")).' IST · Records: '.count($rows).'</p><table><thead><tr>';
     foreach($headers as $head) echo '<th>'.h($head).'</th>';
     echo '</tr></thead><tbody>';
-    foreach($rows as $row){
-        echo '<tr>';
-        foreach($keys as $key){
-            $v=$row[$key]??'';
-            if (str_contains($key, 'email')) $v=mask_report_email($v);
-            elseif (str_contains($key,'_at') || $key==='created_at') $v=report_time($v);
-            echo '<td>'.h($v).'</td>';
-        }
-        echo '</tr>';
-    }
+    foreach($rows as $row){ echo '<tr>'; foreach($keys as $key){ $v=$row[$key]??''; if (str_contains($key,'email')) $v=mask_report_email($v); elseif (str_contains($key,'_at') || $key==='created_at') $v=report_time($v); echo '<td>'.h($v).'</td>'; } echo '</tr>'; }
     echo '</tbody></table></body></html>'; exit;
 }
 if ($roomCode !== '') {
-    $room = RoomAccess::findByCode($pdo, $roomCode);
+    $room = RoomAccess::findByCode($pdo, $roomCode, true);
     $hostStmt = $pdo->prepare('SELECT name AS host_name, email AS host_email FROM users WHERE id = ?');
     $hostStmt->execute([$room['host_user_id']]);
     $host = $hostStmt->fetch() ?: [];
@@ -94,9 +135,9 @@ if ($roomCode !== '') {
     $reactionCountStmt->execute([$room['id']]);
     $reactionCount = (int)$reactionCountStmt->fetchColumn();
     $playersStmt = $pdo->prepare(
-        'SELECT u.name, u.email, rp.joined_at
+        'SELECT u.name, u.email, rp.joined_at, rp.blocked_at, rp.is_active
          FROM room_players rp JOIN users u ON u.id = rp.user_id
-         WHERE rp.room_id = ? AND rp.is_active = 1
+         WHERE rp.room_id = ?
          ORDER BY rp.joined_at ASC'
     );
     $playersStmt->execute([$room['id']]);
@@ -111,6 +152,14 @@ if ($roomCode !== '') {
     );
     $winnersStmt->execute([$room['id']]);
     $winners = FullHouse::annotate($winnersStmt->fetchAll());
+    if ($maskEmails) {
+        $maskPeople = $players;
+        $maskPeople[] = ['name' => (string)($room['host_name'] ?? ''), 'email' => (string)($room['host_email'] ?? '')];
+        [$maskPeople, $winners] = mask_room_public_people($maskPeople, $winners);
+        $maskedHost = array_pop($maskPeople);
+        $room['host_email'] = $maskedHost['email'] ?? ($room['host_email'] ?? '');
+        $players = $maskPeople;
+    }
     $fullHouseConfigured = FullHouse::configured($room);
 
     header('Content-Type: text/html; charset=utf-8');
@@ -129,13 +178,14 @@ if ($roomCode !== '') {
     <div class="actions no-print"><button data-print>Print / Save as PDF</button><script src="/assets/js/print-report.js"></script></div>
     <h1>Housiy — Room Report</h1>
     <div class="meta">Generated: <?= h((new DateTimeImmutable('now', new DateTimeZone('Asia/Kolkata')))->format('Y-m-d H:i:s') . ' IST') ?></div>
-    <p><strong>Title:</strong> <?= h($room['title']) ?> &nbsp; <strong>Status:</strong> <?= h(report_status((string)$room['status'])) ?></p>
+    <p><strong>Title:</strong> <?= h($room['title']) ?> &nbsp; <strong>Status:</strong> <?= h(!empty($room['deleted_at']) ? 'Deleted' : report_status((string)$room['status'])) ?></p>
     <table><tbody>
       <tr><th>Host</th><td><?= h($room['host_name'] ?? '—') ?></td><th>Host Email</th><td><?= h(mask_report_email($room['host_email'] ?? '—')) ?></td></tr>
       <tr><th>Players</th><td><?= count($players) ?> / <?= (int)$room['max_players'] ?></td><th>Numbers called</th><td><?= $calledCount ?> / 90</td></tr>
       <tr><th>Reactions count</th><td><?= $reactionCount ?></td><th>Room ID</th><td><?= h($room['room_code']) ?></td></tr>
       <tr><th>Created</th><td><?= h(report_time($room['created_at'])) ?></td><th>Start time</th><td><?= h(report_time($room['started_at'] ?? null)) ?></td></tr>
       <tr><th>Completed time</th><td><?= h(report_time($room['ended_at'] ?? null)) ?></td><th>Duration</th><td><?= h(report_duration($room['started_at'] ?? null, $room['ended_at'] ?? null, (string)$room['status'])) ?></td></tr>
+      <?php if (!empty($room['deleted_at'])): ?><tr><th>Deleted at</th><td colspan="3"><?= h(report_time($room['deleted_at'])) ?></td></tr><?php endif; ?>
     </tbody></table>
     <h2>Winners (<?= count($winners) ?>)</h2>
     <table><thead><tr><th>Prize Name</th><th>Winner Name</th><th>Email</th><th>Claim Time</th></tr></thead><tbody>
@@ -143,9 +193,9 @@ if ($roomCode !== '') {
     <?php foreach ($winners as $w): ?><tr><td><?= h(str_replace('_', ' ', $w['prize_type']) . ($w['prize_type'] === 'FULL_HOUSE' && $fullHouseConfigured > 1 ? ' #' . (int)$w['winner_position'] . ' of ' . $fullHouseConfigured : '')) ?></td><td><?= h($w['winner_name']) ?></td><td><?= h(mask_report_email($w['winner_email'])) ?></td><td><?= h(report_time($w['claimed_at'])) ?></td></tr><?php endforeach; ?>
     </tbody></table>
     <h2>Players in Room (<?= count($players) ?>)</h2>
-    <table><thead><tr><th>Player Name</th><th>Email</th><th>Joined At</th></tr></thead><tbody>
-    <?php if (!$players): ?><tr><td colspan="3">No players in this room.</td></tr><?php endif; ?>
-    <?php foreach ($players as $p): ?><tr><td><?= h($p['name']) ?></td><td><?= h(mask_report_email($p['email'])) ?></td><td><?= h(report_time($p['joined_at'])) ?></td></tr><?php endforeach; ?>
+    <table><thead><tr><th>Player Name</th><th>Email</th><th>Joined At</th><th>Current Status</th><th>Blocked At</th></tr></thead><tbody>
+    <?php if (!$players): ?><tr><td colspan="5">No players in this room.</td></tr><?php endif; ?>
+    <?php foreach ($players as $p): ?><tr><td><?= h($p['name']) ?></td><td><?= h(mask_report_email($p['email'])) ?></td><td><?= h(report_time($p['joined_at'])) ?></td><td><?= (int)$p['is_active'] === 1 ? 'Active' : 'Inactive' ?></td><td><?= h(report_time($p['blocked_at'] ?? null)) ?></td></tr><?php endforeach; ?>
     </tbody></table></body></html>
     <?php
     exit;
@@ -159,30 +209,27 @@ if ($view === 'hosts') {
     $headers = ['Name','Email','Rooms Hosted','Last Hosted'];
     $rows = $pdo->query(
         'SELECT u.name,u.email,COUNT(r.id) AS rooms_hosted,MAX(r.created_at) AS last_hosted_at
-         FROM users u JOIN rooms r ON r.host_user_id=u.id
+         FROM users u LEFT JOIN rooms r ON r.host_user_id=u.id WHERE u.ever_hosted=1
          GROUP BY u.id,u.name,u.email ORDER BY rooms_hosted DESC'
     )->fetchAll();
 } elseif ($view === 'players') {
     $title = 'Players';
     $headers = ['Name','Email','Rooms Joined','Last Joined'];
     $rows = $pdo->query(
-        'SELECT u.name,u.email,COUNT(rp.id) AS rooms_joined,MAX(rp.joined_at) AS last_joined_at
-         FROM users u JOIN room_players rp ON rp.user_id=u.id AND rp.is_active=1
-         JOIN rooms joined_room ON joined_room.id=rp.room_id AND joined_room.host_user_id<>u.id
-         GROUP BY u.id,u.name,u.email ORDER BY rooms_joined DESC'
+        'SELECT u.name,u.email,COUNT(DISTINCT CASE WHEN joined_room.host_user_id<>u.id THEN rp.id END) AS rooms_joined,MAX(CASE WHEN joined_room.host_user_id<>u.id THEN rp.joined_at END) AS last_joined_at
+         FROM users u LEFT JOIN room_players rp ON rp.user_id=u.id LEFT JOIN rooms joined_room ON joined_room.id=rp.room_id
+         WHERE u.ever_played=1 GROUP BY u.id,u.name,u.email ORDER BY rooms_joined DESC'
     )->fetchAll();
 } elseif ($view === 'users') {
     $title = 'Users';
     $headers = ['Name','Email','User Type','Joined Date'];
     $rows = $pdo->query(
         "SELECT u.name,u.email,CASE
-           WHEN EXISTS(SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id)
-            AND EXISTS(SELECT 1 FROM room_players rp JOIN rooms jr ON jr.id=rp.room_id WHERE rp.user_id=u.id AND rp.is_active=1 AND jr.host_user_id<>u.id) THEN 'Host + Player'
-           WHEN EXISTS(SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id) THEN 'Host'
+           WHEN u.ever_hosted=1 AND u.ever_played=1 THEN 'Host + Player'
+           WHEN u.ever_hosted=1 THEN 'Host'
            ELSE 'Player' END AS user_type,u.created_at
          FROM users u
-         WHERE EXISTS(SELECT 1 FROM rooms hr WHERE hr.host_user_id=u.id)
-            OR EXISTS(SELECT 1 FROM room_players rp WHERE rp.user_id=u.id)
+         WHERE u.ever_hosted=1 OR u.ever_played=1
          ORDER BY u.created_at DESC"
     )->fetchAll();
 } else {
@@ -200,14 +247,16 @@ if ($view === 'hosts') {
     $q=$pdo->prepare($sql); $q->execute($args); $rooms=$q->fetchAll();
     foreach ($rooms as $r) {
         $rows[] = [
-            'room_code'=>$r['room_code'], 'title'=>$r['title'], 'status'=>report_status((string)$r['status']),
-            'host_name'=>$r['host_name'], 'host_email'=>mask_report_email($r['host_email']),
+            'room_code'=>$r['room_code'], 'title'=>$r['title'], 'status'=>!empty($r['deleted_at']) ? 'Deleted' : report_status((string)$r['status']),
+            'host_name'=>$r['host_name'], 'host_email'=>$r['host_email'],
             'player_count'=>(int)$r['player_count'], 'created_at'=>report_time($r['created_at']),
             'started_at'=>report_time($r['started_at']), 'ended_at'=>report_time($r['ended_at']),
             'duration'=>report_duration($r['started_at'],$r['ended_at'],(string)$r['status'])
         ];
     }
 }
+
+$rows = mask_report_rows_intelligently($rows);
 
 header('Content-Type: text/html; charset=utf-8');
 ?>

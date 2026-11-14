@@ -762,6 +762,9 @@ window.addEventListener('housiy:realtime', (event) => {
   // Accept the current `reaction` envelope and equivalent `data`/`payload`
   // envelopes during a rolling frontend/gateway deployment.
   const data = detail.reaction || detail.data || detail.payload || {};
+  if (type === 'player_removed') {
+    void poll().catch(error => console.warn('[Housiy host] player roster reconciliation failed:', error));
+  }
   if (type === 'game_ended') {
     const finalWinners = Array.isArray(data.final_winners) ? data.final_winners : [];
     if (finalWinners.length) {

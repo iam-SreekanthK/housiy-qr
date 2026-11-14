@@ -24,7 +24,6 @@
 #   1) Remove containers and Compose networks; preserve volumes.
 #   2) Remove containers, Compose networks, and Compose-managed volumes.
 #
-# Cloudflare is managed separately.
 
 set -Eeuo pipefail
 umask 077
@@ -532,5 +531,4 @@ printf '%q ' "${DC[@]}"
 echo "restart"
 echo
 echo "Docker is configured to start at system boot."
-echo "Cloudflare is managed separately."
 echo "=============================================="

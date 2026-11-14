@@ -17,7 +17,7 @@ function setActiveTab(tab) {
   currentTab = tab; currentView = tab;
   closeRoomDetails();
   ['rooms', 'hosts', 'players'].forEach(t => document.getElementById(`${t}Tab`).classList.toggle('d-none', t !== (tab === 'users' ? 'players' : tab)));
-  { const h = document.querySelector('#playersTab thead tr'); if (h) h.innerHTML = tab === 'users' ? '<th>Name</th><th>Email</th><th>User Type</th><th>Joined Date</th>' : '<th>Name</th><th>Email</th><th>Last Joined Room</th><th>Joined Date</th>'; }
+  { const h = document.querySelector('#playersTab thead tr'); if (h) h.innerHTML = tab === 'users' ? '<th>Name</th><th>Email</th><th>User Type</th><th>Joined Date</th><th>Last Joined Room</th><th>Last Hosted Room</th><th>Blocked At</th><th>Access</th>' : '<th>Name</th><th>Email</th><th>Last Joined Room</th><th>Joined Date</th><th>Blocked At</th>'; }
   const pdf = document.getElementById('exportPdfBtn'); const excel = document.getElementById('exportExcelBtn');
   if (pdf) pdf.href = `api/admin_export_pdf.php?view=${encodeURIComponent(currentView)}`;
   if (excel) excel.href = `api/admin_export_excel.php?view=${encodeURIComponent(currentView)}`;
@@ -147,7 +147,7 @@ function durationLabel(seconds) {
 function userBlockAction(user) {
   const blocked = Number(user.is_blocked) === 1 || user.is_blocked === true;
   return `<button type="button" class="btn btn-sm ${blocked ? 'btn-outline-success' : 'btn-outline-danger'} user-block-btn"
-    data-user-id="${Number(user.id)}" data-blocked="${blocked ? '1' : '0'}">${blocked ? 'Unblock' : 'Block'}</button>`;
+    data-user-id="${Number(user.id)}" data-user-name="${escapeHtml(user.name || '')}" data-user-email="${escapeHtml(user.email || '')}" data-blocked="${blocked ? '1' : '0'}">${blocked ? 'Unblock' : 'Block'}</button>`;
 }
 function bindUserBlockActions(containerSelector) {
   document.querySelectorAll(`${containerSelector} .user-block-btn`).forEach(btn => btn.addEventListener('click', async e => {
@@ -156,7 +156,7 @@ function bindUserBlockActions(containerSelector) {
     const action = block ? 'Block' : 'Unblock';
     if (!confirm(`${action} this user? ${block ? 'They will not be able to log in, join, or host games.' : 'They will be able to use Housiy again.'}`)) return;
     btn.disabled = true;
-    const res = await apiPost('admin_user_block.php', { user_id: Number(btn.dataset.userId), blocked: block });
+    const res = await apiPost('admin_user_block.php', { user_id: Number(btn.dataset.userId), name: btn.dataset.userName || '', email: btn.dataset.userEmail || '', blocked: block });
     if (!res.success) {
       btn.disabled = false;
       showToast(res.error || `${action} failed`, 'danger');
@@ -168,44 +168,46 @@ function bindUserBlockActions(containerSelector) {
 }
 function renderHostsBody(rows) {
   const head = document.querySelector('#hostsTab thead tr');
-  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>Rooms Hosted</th><th>Last Hosted Room</th><th>Status</th><th>Duration</th><th>Last Hosted</th><th>Access</th>';
+  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>Rooms Hosted</th><th>Last Hosted Room</th><th>Status</th><th>Duration</th><th>Last Hosted</th><th>Current Status</th><th>Last Block Event</th><th>Block Events</th><th>Access</th>';
   document.getElementById('hostsBody').innerHTML = rows.length ? rows.map(h => `
     <tr class="user-row" data-email="${escapeHtml(h.email)}" style="cursor:pointer;">
       <td>${escapeHtml(h.name)}</td><td>${escapeHtml(h.email)}</td><td>${h.rooms_hosted}</td>
       <td><code>${escapeHtml(h.last_hosted_room_code || '—')}</code></td>
       <td>${h.last_hosted_status ? statusPill(h.last_hosted_status) : '—'}</td>
       <td class="text-dim small">${h.last_hosted_status === 'COMPLETED' ? durationLabel(h.last_hosted_duration_seconds) : '—'}</td>
-      <td class="text-dim small">${formatAdminDateTime(h.last_hosted_at)}</td><td>${userBlockAction(h)}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="text-dim small text-center py-3">No hosts match this filter.</td></tr>';
+      <td class="text-dim small">${formatAdminDateTime(h.last_hosted_at)}</td><td>${h.is_blocked ? '<span class="text-danger">Blocked</span>' : '<span class="text-success">Active</span>'}</td><td class="text-dim small">${escapeHtml(h.last_block_event || '—')}</td><td>${Number(h.block_event_count || 0)}</td><td>${userBlockAction(h)}</td>
+    </tr>`).join('') : '<tr><td colspan="11" class="text-dim small text-center py-3">No hosts match this filter.</td></tr>';
   document.querySelectorAll('#hostsBody .user-row').forEach(row => row.addEventListener('click', e => { if (!e.target.closest('button')) openUserHistory(row.dataset.email); }));
   bindUserBlockActions('#hostsBody');
 }
 
 function renderPlayersBody(rows) {
   const head = document.querySelector('#playersTab thead tr');
-  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>Last Joined Room</th><th>Status</th><th>Duration</th><th>Joined Date</th><th>Access</th>';
+  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>Last Joined Room</th><th>Status</th><th>Duration</th><th>Joined Date</th><th>Current Status</th><th>Last Block Event</th><th>Block Events</th><th>Access</th>';
   document.getElementById('playersBody').innerHTML = rows.length ? rows.map(p => `
     <tr class="user-row" data-email="${escapeHtml(p.email)}" style="cursor:pointer;">
       <td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.email)}</td><td><code>${escapeHtml(p.last_room_code || '—')}</code></td>
       <td>${p.last_room_status ? statusPill(p.last_room_status) : '—'}</td>
       <td class="text-dim small">${p.last_room_status === 'COMPLETED' ? durationLabel(p.last_room_duration_seconds) : '—'}</td>
-      <td class="text-dim small">${formatAdminDateTime(p.last_joined_at)}</td><td>${userBlockAction(p)}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="text-dim small text-center py-3">No players match this filter.</td></tr>';
+      <td class="text-dim small">${formatAdminDateTime(p.last_joined_at)}</td><td>${p.is_blocked ? '<span class="text-danger">Blocked</span>' : '<span class="text-success">Active</span>'}</td><td class="text-dim small">${escapeHtml(p.last_block_event || '—')}</td><td>${Number(p.block_event_count || 0)}</td><td>${userBlockAction(p)}</td>
+    </tr>`).join('') : '<tr><td colspan="10" class="text-dim small text-center py-3">No players match this filter.</td></tr>';
   document.querySelectorAll('#playersBody .user-row').forEach(row => row.addEventListener('click', e => { if (!e.target.closest('button')) openUserHistory(row.dataset.email); }));
   bindUserBlockActions('#playersBody');
 }
 
 function renderUsersBody(rows) {
   const head = document.querySelector('#playersTab thead tr');
-  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>User Type</th><th>Joined Date</th><th>Last Joined Room</th><th>Last Hosted Room</th><th>Access</th>'; 
+  if (head) head.innerHTML = '<th>Name</th><th>Email</th><th>User Type</th><th>Joined Date</th><th>Last Joined Room</th><th>Last Hosted Room</th><th>Current Status</th><th>Last Block Event</th><th>Block Events</th><th>Access</th>'; 
   document.getElementById('playersBody').innerHTML = rows.length ? rows.map(u => `
     <tr class="user-row" data-email="${escapeHtml(u.email)}" style="cursor:pointer;">
       <td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.user_type)}</td>
       <td class="text-dim small">${formatAdminDateTime(u.joined_at || u.created_at)}</td>
       <td><code>${escapeHtml(u.last_joined_room_code || '—')}</code></td>
       <td><code>${escapeHtml(u.last_hosted_room_code || '—')}</code></td>
+      <td>${u.is_blocked ? '<span class="text-danger">Blocked</span>' : '<span class="text-success">Active</span>'}</td>
+      <td class="text-dim small">${escapeHtml(u.last_block_event || '—')}</td><td>${Number(u.block_event_count || 0)}</td>
       <td>${userBlockAction(u)}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="text-dim small text-center py-3">No users match this filter.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="10" class="text-dim small text-center py-3">No users match this filter.</td></tr>';
   document.querySelectorAll('#playersBody .user-row').forEach(row => row.addEventListener('click', e => { if (!e.target.closest('button')) openUserHistory(row.dataset.email); }));
   bindUserBlockActions('#playersBody');
 }
@@ -309,15 +311,18 @@ async function openRoomDetails(roomCode) {
         <td>${escapeHtml(p.name || '—')}</td>
         <td>${escapeHtml(p.email || '—')}</td>
         <td class="text-nowrap">${formatAdminDateTime(p.joined_at)}</td>
+        <td>${Number(p.is_active) === 1 ? '<span class="text-success">Active</span>' : '<span class="text-danger">Inactive</span>'}</td>
+        <td class="text-nowrap">${p.blocked_at ? formatAdminDateTime(p.blocked_at) : '—'}</td>
       </tr>`).join('')
-    : '<tr><td colspan="4" class="text-dim text-center py-3">No players in this room.</td></tr>';
+    : '<tr><td colspan="6" class="text-dim text-center py-3">No players in this room.</td></tr>';
 
   roomDetailsBody.innerHTML = `
-    <div class="mb-2">${statusPill(r.status)} <span class="text-dim small ms-2">${escapeHtml(r.title)}</span></div>
+    <div class="mb-2">${statusPill(r.deleted_at ? 'DELETED' : r.status)} <span class="text-dim small ms-2">${escapeHtml(r.title)}</span></div>
     <div class="row g-2 mb-3">
       <div class="col-6"><div class="text-dim small">Host</div><div class="small">${escapeHtml(r.host_name)}<br><span class="text-dim">${escapeHtml(r.host_email)}</span></div></div>
       <div class="col-6"><div class="text-dim small">Players</div><div class="small">${r.player_count} / ${r.max_players}</div></div>
       <div class="col-6"><div class="text-dim small">Created</div><div class="small">${formatAdminDateTime(r.created_at)}</div></div>
+      ${r.deleted_at ? `<div class="col-6"><div class="text-dim small">Deleted at</div><div class="small">${formatAdminDateTime(r.deleted_at)}</div></div>` : ''}
       <div class="col-6"><div class="text-dim small">Numbers called</div><div class="small">${res.game.numbers_called_count} / 90</div></div>
       <div class="col-6"><div class="text-dim small">Reactions count</div><div class="small">${Number(res.game.reactions_count || 0)}</div></div>
       <div class="col-6"><div class="text-dim small">Start time</div><div class="small">${started}</div></div>
@@ -336,7 +341,7 @@ async function openRoomDetails(roomCode) {
     <h6 class="mb-2">Players in room (${res.players.length})</h6>
     <div class="table-responsive">
       <table class="table table-dark-glass table-sm align-middle">
-        <thead><tr><th>#</th><th>Player name</th><th>Email</th><th>Joined at</th></tr></thead>
+        <thead><tr><th>#</th><th>Player name</th><th>Email</th><th>Joined at</th><th>Current status</th><th>Blocked at</th></tr></thead>
         <tbody>${playersRows}</tbody>
       </table>
     </div>
@@ -420,8 +425,14 @@ async function openUserHistory(email) {
       </div>`).join('')
     : '<p class="text-dim small mb-0">Never joined a room.</p>';
 
+  const blockEventsHtml = (res.block_events || []).length
+    ? res.block_events.map(e => `<div class="d-flex justify-content-between align-items-center small py-1 border-bottom border-secondary"><span><strong class="${e.event_type === 'BLOCK' ? 'text-danger' : 'text-success'}">${escapeHtml(e.event_type)}</strong>${e.reason ? ` · ${escapeHtml(e.reason)}` : ''}</span><span class="text-dim">${formatAdminDateTime(e.event_at)}</span></div>`).join('')
+    : '<p class="text-dim small mb-0">No block/unblock events recorded.</p>';
+
   roomDetailsBody.innerHTML = `
     <div class="mb-3"><span class="fw-bold">${escapeHtml(res.user.name)}</span> <span class="text-dim small ms-2">${escapeHtml(res.user.email)}</span></div>
+    <h6 class="text-dim small mb-1">Block / unblock audit history (${(res.block_events || []).length})</h6>
+    <div class="mb-3">${blockEventsHtml}</div>
     <h6 class="text-dim small mb-1">Rooms hosted (${res.hosted.length})</h6>
     <div class="mb-3">${hostedHtml}</div>
     <h6 class="text-dim small mb-1">Rooms joined (${res.joined.length})</h6>

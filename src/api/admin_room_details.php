@@ -6,12 +6,13 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/FullHouse.php';
 require_once __DIR__ . '/../includes/AdminAuth.php';
 require_once __DIR__ . '/../includes/RoomAccess.php';
+require_once __DIR__ . '/../includes/PublicEmailMask.php';
 
 AdminAuth::requireAdmin();
 $pdo = DB::conn();
 
 $roomCode = (string)($_GET['room_code'] ?? '');
-$room = RoomAccess::findByCode($pdo, $roomCode);
+$room = RoomAccess::findByCode($pdo, $roomCode, true);
 
 $gameStmt = $pdo->prepare('SELECT * FROM games WHERE room_id = ? LIMIT 1');
 $gameStmt->execute([$room['id']]);
@@ -26,10 +27,10 @@ $hostStmt->execute([$room['host_user_id']]);
 $host = $hostStmt->fetch();
 
 $playersStmt = $pdo->prepare(
-    'SELECT u.name, u.email, rp.joined_at
+    'SELECT u.name, u.email, rp.joined_at, rp.blocked_at, rp.is_active
      FROM room_players rp
      JOIN users u ON u.id = rp.user_id
-     WHERE rp.room_id = ? AND rp.is_active = 1
+     WHERE rp.room_id = ?
      ORDER BY rp.joined_at ASC'
 );
 $playersStmt->execute([$room['id']]);
@@ -50,6 +51,16 @@ $winnersStmt = $pdo->prepare(
 $winnersStmt->execute([$room['id']]);
 $winners = FullHouse::annotate($winnersStmt->fetchAll());
 
+// Apply the same room-wide collision-aware masking used by the live player/host
+// room pages. Include the host in the comparison set so identical names are
+// disambiguated consistently in the admin room view too.
+$maskSet = $players;
+$maskSet[] = ['name' => (string)($host['name'] ?? ''), 'email' => (string)($host['email'] ?? '')];
+[$maskedSet, $winners] = mask_room_public_people($maskSet, $winners);
+$hostMasked = array_pop($maskedSet);
+$players = $maskedSet;
+$host['email'] = $hostMasked['email'] ?? ($host['email'] ?? null);
+
 json_ok([
     'room' => [
         'room_code' => $room['room_code'],
@@ -57,7 +68,8 @@ json_ok([
         'status' => $room['status'],
         'max_players' => (int)$room['max_players'],
         'full_house_winners' => FullHouse::configured($room),
-        'player_count' => count($players),
+        'player_count' => count(array_filter($players, static fn($p) => (int)$p['is_active'] === 1)),
+        'total_player_records' => count($players),
         'host_name' => $host['name'] ?? null,
         'host_email' => $host['email'] ?? null,
         // UTC (as stored) — the admin UI converts these to the viewer's
@@ -65,6 +77,7 @@ json_ok([
         'created_at' => $room['created_at'],
         'started_at' => $room['started_at'],
         'ended_at' => $room['ended_at'],
+        'deleted_at' => $room['deleted_at'] ?? null,
     ],
     'game' => [
         'status' => $game['status'] ?? null,

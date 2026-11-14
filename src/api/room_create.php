@@ -76,6 +76,7 @@ try {
         $autoCallEnabled ? 1 : 0, $autoCallEnabled ? $autoCallInterval : null,
     ]);
     $roomId = (int)$pdo->lastInsertId();
+    $pdo->prepare('UPDATE users SET ever_hosted = 1 WHERE id = ?')->execute([(int)$user['id']]);
 
     GameEngine::getOrCreateGame($pdo, $roomId);
 

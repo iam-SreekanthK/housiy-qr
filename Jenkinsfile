@@ -1,5 +1,5 @@
 // ============================================================================
-// Housiy CI/CD pipeline - branch-driven (full walkthrough: pipeline-setup.md)
+// Housiy CI/CD pipeline - branch-driven (setup guide: docs/ci-cd/jenkins.md)
 // Recommended Jenkins job name: "housiy-cicd" (Multibranch Pipeline)
 //
 // Requires a Jenkins MULTIBRANCH PIPELINE job (not a plain Pipeline job) so
@@ -8,9 +8,9 @@
 //   dev  -> install deps, full test suite (PHPUnit/Playwright/k6 smoke),
 //           SonarQube + Quality Gate, Trivy image scan (HTML report), push
 //           the image to Nexus (tag dev-<build>, traceability only - the
-//           local deploy below doesn't pull it back), then deploy locally
-//           via docker compose (app container only - db/phpmyadmin are
-//           never touched).
+//           local deploy below doesn't pull it back), then start/update the
+//           DEV Compose application services against the existing database
+//           volume. It never runs `down -v` and does not start phpMyAdmin.
 //
 //   stg  -> NO security scan (already done on dev). Builds a fresh image
 //           from the stg branch code, pushes it to Nexus (tag
@@ -20,7 +20,7 @@
 //           and the Jenkins agent share the same Docker engine, e.g.
 //           Docker Desktop's built-in Kubernetes. If stg's cluster is
 //           remote, point this stage's deploy at the Nexus image instead -
-//           see pipeline-setup.md), then runs the FULL k6 suite
+//           see docs/ci-cd/jenkins.md), then runs the FULL k6 suite
 //           (smoke+load+stress+soak) and publishes the complete HTML
 //           report.
 //

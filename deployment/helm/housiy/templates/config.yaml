@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: housiy-nginx
+  labels:
+    {{- include "housiy.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+    server {
+      listen 8080;
+      root /var/www/html;
+      index index.html;
+      client_max_body_size 4m;
+      location = /ws {
+        proxy_pass http://housiy-realtime:8090/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header Origin $http_origin;
+        proxy_read_timeout 75s;
+        proxy_buffering off;
+      }
+      location ~ ^/api/([A-Za-z0-9_-]+\.php)$ {
+        include /etc/nginx/fastcgi_params;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_param SCRIPT_FILENAME /var/www/html$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT /var/www/html;
+      }
+      location ~ \.php(?:/|$) { return 404; }
+      location ~* /\. { deny all; }
+      location / { try_files $uri $uri/ =404; }
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: housiy-runtime
+type: Opaque
+stringData:
+  DB_HOST: {{ .Values.database.host | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_USER: {{ .Values.database.user | quote }}
+  DB_PASS: {{ .Values.database.password | quote }}
+  REDIS_PASSWORD: {{ .Values.redis.password | quote }}

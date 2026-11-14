@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-redis-headless
+spec:
+  clusterIP: None
+  selector: { app: housiy-redis }
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-redis
+spec:
+  selector: { app: housiy-redis }
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: housiy-redis
+spec:
+  serviceName: housiy-redis-headless
+  replicas: 1
+  selector:
+    matchLabels: { app: housiy-redis }
+  template:
+    metadata:
+      labels: { app: housiy-redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["sh", "-c"]
+          args:
+            - 'if [ -n "$REDIS_PASSWORD" ]; then exec redis-server --appendonly yes --appendfsync everysec --requirepass "$REDIS_PASSWORD"; else exec redis-server --appendonly yes --appendfsync everysec; fi'
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: REDIS_PASSWORD } }
+          ports: [{ containerPort: 6379, name: redis }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          readinessProbe: { exec: { command: ["sh", "-c", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli ping"] }, initialDelaySeconds: 5 }
+          livenessProbe: { exec: { command: ["sh", "-c", "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli ping"] }, initialDelaySeconds: 15, periodSeconds: 15 }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: housiy-realtime
+spec:
+  selector: { app: housiy-realtime }
+  ports: [{ port: 8090, targetPort: 8090 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: housiy-realtime
+spec:
+  replicas: {{ .Values.realtime.replicas }}
+  selector:
+    matchLabels: { app: housiy-realtime }
+  template:
+    metadata:
+      labels: { app: housiy-realtime }
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: realtime
+          image: "{{ .Values.realtime.image.registry }}/{{ .Values.realtime.image.repository }}:{{ .Values.realtime.image.tag }}"
+          imagePullPolicy: {{ .Values.realtime.image.pullPolicy }}
+          ports: [{ containerPort: 8090 }]
+          env:
+            - { name: PORT, value: "8090" }
+            - { name: APP_ENV, value: production }
+            - { name: REDIS_HOST, value: housiy-redis }
+            - { name: REDIS_PREFIX, value: housiy }
+            - { name: WS_AUTH_URL, value: http://housiy-app/api/ws_auth.php }
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: REDIS_PASSWORD } }
+          readinessProbe: { httpGet: { path: /healthz, port: 8090 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8090 }, initialDelaySeconds: 15, periodSeconds: 15 }
+          resources: {{- toYaml .Values.resources.realtime | nindent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: housiy-worker
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: housiy-worker }
+  template:
+    metadata:
+      labels: { app: housiy-worker }
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["php", "/var/www/bin/worker.php"]
+          env:
+            - { name: APP_ENV, value: production }
+            - { name: DB_PORT, value: "3306" }
+            - { name: REDIS_HOST, value: housiy-redis }
+            - { name: REDIS_PREFIX, value: housiy }
+            - name: DB_HOST
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: DB_HOST } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: DB_NAME } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: DB_USER } }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: DB_PASS } }
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: housiy-runtime, key: REDIS_PASSWORD } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]

@@ -28,7 +28,7 @@ const checks = [
   [/if \(status === 'LOBBY'\)[\s\S]{0,280}secondsEl\.textContent = `\(\$\{interval\}s\)`/.test(player), 'player lobby shows configured auto-call pace without a running countdown'],
   [/autoCallUiRunning = status === 'LIVE'/.test(player) && /autoCallUiRunning = status === 'LIVE'/.test(host), 'host and player countdowns tick only while game is live'],
   [/Do not fetch results\.php from every ticket render/.test(player) && !/function renderAll\(res\)[\s\S]*?fetchRoomExtras\(\);/.test(player), 'player ticket rendering does not trigger duplicate results.php reads'],
-  [/type === 'hello' && initialRoomExtrasLoaded/.test(player) && /'room_state_sync','player_joined','player_left','game_started','game_paused','game_resumed','game_ended','prize_won'/.test(player), 'player room extras refresh only on lifecycle and roster events'],
+  [/type === 'hello' && initialRoomExtrasLoaded/.test(player) && /'room_state_sync','player_joined','player_left','player_removed','game_started','game_paused','game_resumed','game_ended','prize_won'/.test(player), 'player room extras refresh only on lifecycle and roster events'],
   [/initializeReactionCursor\(\)/.test(client) && /Promise\.allSettled\(\[loadHistory\(true\), initializeReactionCursor\(\), loadReactionCount\(\)\]\)/.test(client), 'emoji page uses one cursor baseline instead of an immediate poll'],
   [/if \(realtimeHelloSeen\) void poll\(true\)/.test(client), 'emoji cursor recovery polls only after a reconnect'],
   [/if \(\(type === 'player_joined' \|\| type === 'player_left'\) && modal\.classList\.contains\('open'\)/.test(client), 'player roster API is not called until recipient selection is open'],
